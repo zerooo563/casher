@@ -50,4 +50,4 @@ npm run build
 
 المستودع يتضمن GitHub Actions workflow يبني التطبيق إلى `dist` وينشره عند الدفع إلى `main`. استخدم **Settings → Pages → Build and deployment → Source → GitHub Actions** إذا لم يكن مصدر Pages مضبوطاً على Actions. رابط المشروع هو <https://zerooo563.github.io/casher/>.
 
-يُبنى التطبيق لمسار المستودع `/casher/` على GitHub Pages، بينما يبقى المسار الافتراضي `/` متوافقاً مع Vercel. يعالج React Router المسارات داخل قاعدة URL الخاصة بالنشر، ويستخدم ملف `404.html` كمسار رجوع لدعم فتح أو تحديث روابط الصفحات الداخلية مباشرة.
+يُبنى التطبيق لمسار المستودع `/casher/` على GitHub Pages، بينما يبقى المسار الافتراضي `/` متوافقاً مع Vercel. يعالج React Router المسارات داخل قاعدة URL الخاصة بالنشر، وينشئ الـworkflow صفحات ثابتة للمسارات الداخلية حتى تعمل عند فتحها أو تحديثها مباشرة.

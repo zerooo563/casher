@@ -36,7 +36,11 @@ jobs:
           VITE_BASE_PATH: /casher/
 
       - name: Support direct client-side routes
-        run: cp dist/index.html dist/404.html
+        run: |
+          cp dist/index.html dist/404.html
+          mkdir -p dist/products dist/movements
+          cp dist/index.html dist/products/index.html
+          cp dist/index.html dist/movements/index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
