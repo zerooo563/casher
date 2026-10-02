@@ -804,7 +804,7 @@ export default function DashboardPage() {
                 <span>
                   {saleMutation.isPending
                     ? 'جارٍ حفظ وطباعة الوصل...'
-                    : 'إنهاء الشراء وطباعة الوصل (PDF / حراري)'}
+                    : 'إنهاء الشراء وطباعة الوصل (PDF)'}
                 </span>
               </button>
             </div>

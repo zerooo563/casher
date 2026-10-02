@@ -253,7 +253,7 @@ export function ReceiptModal({ sale, storeName, onClose }: ReceiptModalProps) {
             className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
           >
             <Printer className="h-4 w-4" />
-            <span>طباعة الوصل (PDF / حراري)</span>
+            <span>طباعة الوصل (PDF)</span>
           </button>
 
           <button
