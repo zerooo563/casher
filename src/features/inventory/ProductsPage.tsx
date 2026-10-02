@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   fetchProducts,
@@ -81,6 +81,7 @@ export default function ProductsPage() {
   const [newProdInitStock, setNewProdInit]      = useState('0')
   const [newProdWh, setNewProdWh]               = useState('')
   const [newProdImage, setNewProdImage]         = useState<string | null>(null)
+  const [productFormError, setProductFormError] = useState<string | null>(null)
 
   // Form State for Stock Adjustment
   const [adjType, setAdjType]   = useState<'adjustment_in' | 'adjustment_out'>('adjustment_in')
@@ -99,8 +100,11 @@ export default function ProductsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
       setShowAddModal(false)
+      setProductFormError(null)
       resetForm()
     },
+    onError: (error) =>
+      setProductFormError(error instanceof Error ? error.message : String(error)),
   })
 
   const updateImageMutation = useMutation({
@@ -149,6 +153,13 @@ export default function ProductsPage() {
     setNewProdWh('')
     setNewProdImage(null)
   }
+
+  useEffect(() => {
+    if (showAddModal) {
+      const frame = requestAnimationFrame(() => barcodeInputRef.current?.focus())
+      return () => cancelAnimationFrame(frame)
+    }
+  }, [showAddModal])
 
   // Handle image upload with auto-compression for Add Modal
   const handleAddImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -235,6 +246,7 @@ export default function ProductsPage() {
               if (units.length > 0 && !newProdUnit) setNewProdUnit(units[0].id)
               if (warehouses.length > 0 && !newProdWh) setNewProdWh(warehouses[0].id)
               setNewProdSku(`SKU-${Math.floor(1000 + Math.random() * 9000)}`)
+              setProductFormError(null)
               setShowAddModal(true)
             }}
             className="inline-flex items-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm"
@@ -780,21 +792,50 @@ export default function ProductsPage() {
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-foreground">
                     الباركود
-                    <span className="text-muted-foreground font-normal mr-1">(مسح بالليزر أو يدوي)</span>
+                    <span className="text-muted-foreground font-normal mr-1">(قارئ USB/Bluetooth كلوحة مفاتيح)</span>
                   </label>
-                  <div className="relative">
-                    <ScanLine className="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
-                    <input
-                      ref={barcodeInputRef}
-                      type="text"
-                      dir="ltr"
-                      placeholder="امسح الباركود بالليزر..."
-                      value={newProdBarcode}
-                      onChange={(e) => setNewProdBarcode(e.target.value)}
-                      className="w-full rounded-md border border-input bg-background pr-9 pl-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
-                      onFocus={() => barcodeInputRef.current?.select()}
-                    />
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <ScanLine className="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                      <input
+                        ref={barcodeInputRef}
+                        type="text"
+                        dir="ltr"
+                        autoComplete="off"
+                        placeholder="امسح الباركود بالماسح..."
+                        value={newProdBarcode}
+                        onChange={(e) => {
+                          setNewProdBarcode(e.target.value)
+                          setProductFormError(null)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            barcodeInputRef.current?.select()
+                          }
+                        }}
+                        className="w-full rounded-md border border-input bg-background pr-9 pl-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+                        onFocus={() => barcodeInputRef.current?.select()}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        barcodeInputRef.current?.focus()
+                        barcodeInputRef.current?.select()
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-foreground hover:bg-muted"
+                    >
+                      <ScanLine className="h-3.5 w-3.5" />
+                      <span>تركيز القارئ</span>
+                    </button>
                   </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    صِل القارئ وسيكتب الرمز هنا تلقائياً؛ اضغط زر التركيز لإعادة تحديد الحقل. لا حاجة إلى كاميرا أو تطبيق إضافي.
+                  </p>
+                  {productFormError && (
+                    <p className="text-xs text-destructive" role="alert">{productFormError}</p>
+                  )}
                 </div>
               </div>
 

@@ -382,9 +382,20 @@ export async function createProduct(input: {
 }): Promise<string> {
   const db = await getDb()
   const id = `p-${Date.now()}`
+  const barcode = input.barcode?.trim() || null
 
   await db.exec('BEGIN;')
   try {
+    if (barcode) {
+      const duplicateBarcode = await db.query(
+        `SELECT id FROM products WHERE TRIM(barcode) = $1 LIMIT 1;`,
+        [barcode]
+      )
+      if (duplicateBarcode.rows.length > 0) {
+        throw new Error('هذا الباركود مسجل مسبقاً لمنتج آخر.')
+      }
+    }
+
     await db.query(
       `INSERT INTO products (id, category_id, unit_id, name_ar, name_en, sku, barcode, cost_price, selling_price, wholesale_price, min_stock, image_url)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);`,
@@ -395,7 +406,7 @@ export async function createProduct(input: {
         input.name_ar,
         input.name_en || null,
         input.sku,
-        input.barcode || null,
+        barcode,
         input.cost_price,
         input.selling_price,
         input.wholesale_price || 0,

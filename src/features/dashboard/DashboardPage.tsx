@@ -70,6 +70,7 @@ export default function DashboardPage() {
   const [searchTerm, setSearchTerm]       = useState('')
   const [selectedCategory, setSelectedCat] = useState<string>('all')
   const [barcodeError, setBarcodeError]   = useState<string | null>(null)
+  const [barcodeProcessingCount, setBarcodeProcessingCount] = useState(0)
   const [lastScanned, setLastScanned]     = useState<{ name: string; price: number } | null>(null)
   const [discount, setDiscount]           = useState('')
   const [completedSale, setCompletedSale] = useState<SaleRecord | null>(null)
@@ -79,10 +80,15 @@ export default function DashboardPage() {
 
   const barcodeRef = useRef<HTMLInputElement>(null)
   const searchRef  = useRef<HTMLInputElement>(null)
+  const scanQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Auto-focus barcode field on load
   useEffect(() => {
     barcodeRef.current?.focus()
+    return () => {
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
+    }
   }, [])
 
   // Re-focus barcode after sale completes
@@ -132,33 +138,46 @@ export default function DashboardPage() {
     })
   }, [])
 
-  // Add product by barcode scanner
-  const addByBarcode = useCallback(async (value: string) => {
+  // Resolve scans one at a time so rapid consecutive scans are not lost.
+  const addByBarcode = useCallback((value: string) => {
     const code = value.trim()
     if (!code) return
     setBarcodeError(null)
-
-    const product = await findProductByBarcode(code)
-    if (!product) {
-      setBarcodeError(`لم يُعثر على منتج بالباركود: ${code}`)
-      setBarcodeInput('')
-      barcodeRef.current?.focus()
-      return
-    }
-
-    addToCart(product)
-    setLastScanned({ name: product.name_ar, price: product.selling_price })
     setBarcodeInput('')
-    setTimeout(() => setLastScanned(null), 3000)
-    barcodeRef.current?.focus()
+    setBarcodeProcessingCount((count) => count + 1)
+    scanQueueRef.current = scanQueueRef.current
+      .then(async () => {
+        const product = await findProductByBarcode(code)
+        if (!product) {
+          setBarcodeError(`لم يُعثر على منتج نشط بالباركود أو SKU: ${code}`)
+          return
+        }
+
+        addToCart(product)
+        setLastScanned({ name: product.name_ar, price: product.selling_price })
+        if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
+        feedbackTimerRef.current = setTimeout(() => setLastScanned(null), 3000)
+      })
+      .catch((error: unknown) => {
+        setBarcodeError(`تعذر البحث عن المنتج: ${String(error)}`)
+      })
+      .finally(() => {
+        setBarcodeProcessingCount((count) => Math.max(0, count - 1))
+        barcodeRef.current?.focus()
+      })
   }, [addToCart])
 
-  // Handle barcode input (laser scanner emits key sequence ending with Enter)
+  // USB/Bluetooth keyboard-wedge scanners usually terminate each scan with Enter.
   const handleBarcodeKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
       addByBarcode(barcodeInput)
     }
+  }
+
+  const focusBarcodeScanner = () => {
+    barcodeRef.current?.focus()
+    barcodeRef.current?.select()
   }
 
   const updateQty = (product_id: string, delta: number) => {
@@ -227,7 +246,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-black text-foreground">شاشة البيع ونقطة البيع (POS)</h1>
           <p className="text-muted-foreground text-sm mt-0.5">
-            امسح الباركود بجهاز الليزر أو ابحث عن المنتجات لإضافتها للسلة واستخراج الوصل (PDF / HTML)
+            امسح الباركود بقارئ USB أو Bluetooth يعمل كلوحة مفاتيح، أو ابحث عن المنتجات لإضافتها للسلة.
           </p>
         </div>
 
@@ -250,7 +269,7 @@ export default function DashboardPage() {
             <span className="p-2.5 bg-primary/10 text-primary rounded-xl">
               <ScanLine className="h-5 w-5" />
             </span>
-            <span>مسح الباركود (ليزر):</span>
+            <span>قارئ الباركود:</span>
           </div>
 
           <div className="relative flex-1">
@@ -258,7 +277,8 @@ export default function DashboardPage() {
               ref={barcodeRef}
               type="text"
               dir="ltr"
-              placeholder="امسح الباركود بجهاز الليزر أو اكتب الباركود واضغط Enter..."
+              autoComplete="off"
+              placeholder="امسح أو اكتب الباركود؛ ينهي القارئ المسح عادةً بـ Enter..."
               value={barcodeInput}
               onChange={(e) => {
                 setBarcodeInput(e.target.value)
@@ -276,13 +296,28 @@ export default function DashboardPage() {
             type="button"
             onClick={() => addByBarcode(barcodeInput)}
             className="px-6 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-black hover:bg-primary/90 transition-colors shrink-0 shadow-sm flex items-center justify-center gap-1.5"
+            disabled={!barcodeInput.trim()}
           >
             <Plus className="h-4 w-4" />
             <span>إضافة للسلة</span>
           </button>
+          <button
+            type="button"
+            onClick={focusBarcodeScanner}
+            className="px-3 py-2.5 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0 flex items-center justify-center"
+            title="إعادة تركيز قارئ الباركود"
+            aria-label="إعادة تركيز قارئ الباركود"
+          >
+            <ScanLine className="h-4 w-4" />
+          </button>
         </div>
 
         {/* Feedback alerts */}
+        {barcodeProcessingCount > 0 && (
+          <div className="text-xs text-muted-foreground animate-pulse" role="status">
+            جارٍ قراءة وإضافة {toArabicNumerals(barcodeProcessingCount)} مسح...
+          </div>
+        )}
         {lastScanned && (
           <div className="flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-3.5 py-2 rounded-xl animate-in fade-in duration-150">
             <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
