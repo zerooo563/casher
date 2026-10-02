@@ -59,7 +59,9 @@ const router = createBrowserRouter([
     path: '*',
     element: <Navigate to={ROUTES.DASHBOARD} replace />,
   },
-])
+], {
+  basename: import.meta.env.BASE_URL,
+})
 
 export function AppRouter() {
   return <RouterProvider router={router} />

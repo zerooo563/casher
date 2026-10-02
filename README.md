@@ -45,3 +45,9 @@ npm run build
 4. انشر المشروع. إعداد `vercel.json` يعيد توجيه مسارات تطبيق SPA إلى `index.html` حتى تعمل الروابط المباشرة والتحديث على `/products` و`/movements`.
 
 بعد النشر، ستبقى بيانات كل متصفح/جهاز منفصلة ومخزنة محلياً في IndexedDB؛ لا يوفر Vercel تخزيناً مركزياً أو نسخاً احتياطية لهذه البيانات.
+
+## النشر على GitHub Pages
+
+المستودع يتضمن GitHub Actions workflow يبني التطبيق إلى `dist` وينشره عند الدفع إلى `main`. استخدم **Settings → Pages → Build and deployment → Source → GitHub Actions** إذا لم يكن مصدر Pages مضبوطاً على Actions. رابط المشروع هو <https://zerooo563.github.io/casher/>.
+
+يُبنى التطبيق لمسار المستودع `/casher/` على GitHub Pages، بينما يبقى المسار الافتراضي `/` متوافقاً مع Vercel. يعالج React Router المسارات داخل قاعدة URL الخاصة بالنشر، ويستخدم ملف `404.html` كمسار رجوع لدعم فتح أو تحديث روابط الصفحات الداخلية مباشرة.
