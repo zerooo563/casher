@@ -53,7 +53,8 @@ async function initSchema(db: PGlite) {
     CREATE TABLE IF NOT EXISTS stock_movements (
       id TEXT PRIMARY KEY,
       warehouse_id TEXT NOT NULL REFERENCES warehouses(id),
-      product_id TEXT NOT NULL REFERENCES products(id),
+      product_id TEXT REFERENCES products(id) ON DELETE SET NULL,
+      product_name TEXT NOT NULL DEFAULT '',
       movement_type TEXT NOT NULL,
       quantity NUMERIC(15,3) NOT NULL,
       unit_cost NUMERIC(19,4) NOT NULL,
@@ -75,13 +76,15 @@ async function initSchema(db: PGlite) {
     CREATE TABLE IF NOT EXISTS sale_items (
       id TEXT PRIMARY KEY,
       sale_id TEXT NOT NULL REFERENCES sales(id),
-      product_id TEXT NOT NULL REFERENCES products(id),
+      product_id TEXT REFERENCES products(id) ON DELETE SET NULL,
       product_name TEXT NOT NULL,
       quantity NUMERIC(15,3) NOT NULL,
       unit_price NUMERIC(19,4) NOT NULL,
       total_price NUMERIC(19,4) NOT NULL
     );
   `)
+
+  await migrateProductHistory(db)
 
   // Add image_url and wholesale_price column if they don't exist (for existing DBs)
   try {
@@ -98,6 +101,73 @@ async function initSchema(db: PGlite) {
   if (countVal === 0) {
     await seedInitialReferenceData(db)
   }
+}
+
+async function migrateProductHistory(db: PGlite) {
+  await db.exec('BEGIN;')
+  try {
+    await db.exec(`
+      ALTER TABLE stock_movements
+        ADD COLUMN IF NOT EXISTS product_name TEXT NOT NULL DEFAULT '';
+      UPDATE stock_movements m
+      SET product_name = p.name_ar
+      FROM products p
+      WHERE m.product_id = p.id AND m.product_name = '';
+
+      ALTER TABLE stock_movements ALTER COLUMN product_id DROP NOT NULL;
+      ALTER TABLE sale_items ALTER COLUMN product_id DROP NOT NULL;
+      CREATE TABLE IF NOT EXISTS app_migrations (
+        id TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+    `)
+
+    await ensureSetNullProductForeignKey(db, 'stock_movements')
+    await ensureSetNullProductForeignKey(db, 'sale_items')
+
+    const seedMigration = await db.query(
+      `SELECT id FROM app_migrations WHERE id = $1;`,
+      ['remove-seeded-demo-products-v1']
+    )
+    if (seedMigration.rows.length === 0) {
+      await db.exec(`
+        DELETE FROM stock_movements
+        WHERE product_id IN ('p-1', 'p-2', 'p-3', 'p-4', 'p-5', 'p-6', 'p-7', 'p-8')
+          AND reference_type = 'initial_count';
+        DELETE FROM products
+        WHERE id IN ('p-1', 'p-2', 'p-3', 'p-4', 'p-5', 'p-6', 'p-7', 'p-8');
+      `)
+      await db.query(
+        `INSERT INTO app_migrations (id) VALUES ($1);`,
+        ['remove-seeded-demo-products-v1']
+      )
+    }
+
+    await db.exec('COMMIT;')
+  } catch (error) {
+    await db.exec('ROLLBACK;')
+    throw error
+  }
+}
+
+async function ensureSetNullProductForeignKey(db: PGlite, table: 'stock_movements' | 'sale_items') {
+  const constraintName = `${table}_product_id_fkey`
+  const existing = await db.query(
+    `SELECT confdeltype
+     FROM pg_constraint
+     WHERE conrelid = $1::regclass AND conname = $2 AND contype = 'f';`,
+    [table, constraintName]
+  )
+  const existingConstraint = existing.rows[0] as { confdeltype?: string } | undefined
+  const onDeleteSetNull = existingConstraint?.confdeltype === 'n'
+  if (onDeleteSetNull) return
+
+  await db.exec(`
+    ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${constraintName};
+    ALTER TABLE ${table}
+      ADD CONSTRAINT ${constraintName}
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL;
+  `)
 }
 
 async function seedInitialReferenceData(db: PGlite) {
@@ -149,7 +219,7 @@ export interface StockMovementRecord {
   id:             string
   warehouse_id:   string
   warehouse_name: string
-  product_id:     string
+  product_id:     string | null
   product_name:   string
   movement_type:  'opening' | 'purchase_receipt' | 'sale' | 'adjustment_in' | 'adjustment_out' | 'transfer_in' | 'transfer_out'
   quantity:       number
@@ -178,7 +248,7 @@ export interface WarehouseItem {
 }
 
 export interface SaleItem {
-  product_id:   string
+  product_id:   string | null
   product_name: string
   quantity:     number
   unit_price:   number
@@ -273,7 +343,7 @@ export async function fetchStockMovements(productId?: string): Promise<StockMove
       m.warehouse_id,
       w.name_ar as warehouse_name,
       m.product_id,
-      p.name_ar as product_name,
+      COALESCE(p.name_ar, m.product_name) as product_name,
       m.movement_type,
       CAST(m.quantity AS FLOAT) as quantity,
       CAST(m.unit_cost AS FLOAT) as unit_cost,
@@ -282,7 +352,7 @@ export async function fetchStockMovements(productId?: string): Promise<StockMove
       m.created_at
     FROM stock_movements m
     JOIN warehouses w ON m.warehouse_id = w.id
-    JOIN products p ON m.product_id = p.id
+    LEFT JOIN products p ON m.product_id = p.id
   `
   const params: unknown[] = []
   if (productId) {
@@ -338,9 +408,9 @@ export async function createProduct(input: {
       const totalCost = input.initial_stock * input.cost_price
       const movId = `mov-${Date.now()}`
       await db.query(
-        `INSERT INTO stock_movements (id, warehouse_id, product_id, movement_type, quantity, unit_cost, total_cost, notes)
-         VALUES ($1, $2, $3, 'opening', $4, $5, $6, 'رصيد افتتاحي عند إنشاء المنتج');`,
-        [movId, input.warehouse_id, id, input.initial_stock, input.cost_price, totalCost]
+        `INSERT INTO stock_movements (id, warehouse_id, product_id, product_name, movement_type, quantity, unit_cost, total_cost, notes)
+         VALUES ($1, $2, $3, $4, 'opening', $5, $6, $7, 'رصيد افتتاحي عند إنشاء المنتج');`,
+        [movId, input.warehouse_id, id, input.name_ar, input.initial_stock, input.cost_price, totalCost]
       )
     }
 
@@ -356,20 +426,6 @@ export async function deleteProduct(productId: string): Promise<void> {
   const db = await getDb()
   await db.exec('BEGIN;')
   try {
-    const references = await db.query(
-      `SELECT
-        (SELECT count(*) FROM stock_movements WHERE product_id = $1) AS movement_count,
-        (SELECT count(*) FROM sale_items WHERE product_id = $1) AS sale_count;`,
-      [productId]
-    )
-    const row = references.rows[0] as Record<string, unknown> | undefined
-    const movementCount = Number(row?.movement_count ?? 0)
-    const saleCount = Number(row?.sale_count ?? 0)
-
-    if (movementCount > 0 || saleCount > 0) {
-      throw new Error('لا يمكن حذف هذا المنتج لارتباطه بحركات مخزون أو مبيعات سابقة. تم الحفاظ على السجلات التاريخية.')
-    }
-
     const result = await db.query(
       `DELETE FROM products WHERE id = $1 RETURNING id;`,
       [productId]
@@ -433,9 +489,9 @@ export async function createSale(input: {
       // Deduct from stock movements
       const movId = `mov-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
       await db.query(
-        `INSERT INTO stock_movements (id, warehouse_id, product_id, movement_type, quantity, unit_cost, total_cost, reference_type, notes)
-         VALUES ($1, $2, $3, 'sale', $4, $5, $6, 'sale', $7);`,
-        [movId, input.warehouse_id, item.product_id, -item.quantity, item.unit_price, totalPrice, `مبيعات - وصل ${receiptNumber}`]
+        `INSERT INTO stock_movements (id, warehouse_id, product_id, product_name, movement_type, quantity, unit_cost, total_cost, reference_type, notes)
+         VALUES ($1, $2, $3, $4, 'sale', $5, $6, $7, 'sale', $8);`,
+        [movId, input.warehouse_id, item.product_id, item.product_name, -item.quantity, item.unit_price, totalPrice, `مبيعات - وصل ${receiptNumber}`]
       )
     }
 
@@ -482,11 +538,20 @@ export async function addStockAdjustment(input: {
   const signedQty = input.movement_type === 'adjustment_in' ? Math.abs(input.quantity) : -Math.abs(input.quantity)
   const totalCost = Math.abs(input.quantity) * input.unit_cost
   const id = `mov-${Date.now()}`
+  const product = await db.query(
+    `SELECT name_ar FROM products WHERE id = $1 AND is_active = true;`,
+    [input.product_id]
+  )
+  const productRow = product.rows[0] as { name_ar?: unknown } | undefined
+  const productName = productRow?.name_ar
+  if (typeof productName !== 'string') {
+    throw new Error('لا يمكن تعديل مخزون منتج محذوف أو غير نشط.')
+  }
 
   await db.query(
-    `INSERT INTO stock_movements (id, warehouse_id, product_id, movement_type, quantity, unit_cost, total_cost, notes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`,
-    [id, input.warehouse_id, input.product_id, input.movement_type, signedQty, input.unit_cost, totalCost, input.notes]
+    `INSERT INTO stock_movements (id, warehouse_id, product_id, product_name, movement_type, quantity, unit_cost, total_cost, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
+    [id, input.warehouse_id, input.product_id, productName, input.movement_type, signedQty, input.unit_cost, totalCost, input.notes]
   )
 }
 

@@ -538,7 +538,7 @@ export default function ProductsPage() {
               </h3>
               <p className="text-sm text-muted-foreground">
                 سيُحذف «{productToDelete.name_ar}» نهائياً من قاعدة البيانات المحلية على هذا الجهاز.
-                لا يمكن حذف صنف مرتبط بحركة مخزون أو مبيعات؛ ستبقى السجلات التاريخية محفوظة.
+                ستبقى حركات المخزون والمبيعات السابقة محفوظة باسم المنتج، مع فصل ارتباطها به.
               </p>
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
