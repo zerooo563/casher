@@ -88,30 +88,19 @@ async function initSchema(db: PGlite) {
     await db.exec(`ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT;`)
     await db.exec(`ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC(19,4) NOT NULL DEFAULT 0;`)
 
-    // Populate clear default product images if missing
-    await db.exec(`
-      UPDATE products SET image_url = 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500&auto=format&fit=crop&q=80' WHERE id = 'p-1' AND (image_url IS NULL OR image_url = '');
-      UPDATE products SET image_url = 'https://images.unsplash.com/photo-1581441363689-1f3c3c414635?w=500&auto=format&fit=crop&q=80' WHERE id = 'p-2' AND (image_url IS NULL OR image_url = '');
-      UPDATE products SET image_url = 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=500&auto=format&fit=crop&q=80' WHERE id = 'p-3' AND (image_url IS NULL OR image_url = '');
-      UPDATE products SET image_url = 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=500&auto=format&fit=crop&q=80' WHERE id = 'p-4' AND (image_url IS NULL OR image_url = '');
-      UPDATE products SET image_url = 'https://images.unsplash.com/photo-1613478223719-2ab802602423?w=500&auto=format&fit=crop&q=80' WHERE id = 'p-5' AND (image_url IS NULL OR image_url = '');
-      UPDATE products SET image_url = 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=500&auto=format&fit=crop&q=80' WHERE id = 'p-6' AND (image_url IS NULL OR image_url = '');
-      UPDATE products SET image_url = 'https://images.unsplash.com/photo-1486297678162-eb2a19b0a32d?w=500&auto=format&fit=crop&q=80' WHERE id = 'p-7' AND (image_url IS NULL OR image_url = '');
-      UPDATE products SET image_url = 'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=500&auto=format&fit=crop&q=80' WHERE id = 'p-8' AND (image_url IS NULL OR image_url = '');
-    `)
   } catch {
     // columns already exist, ignore
   }
 
-  // Check if initial categories and products exist
+  // Seed lookup data only. Product databases start empty; existing data is never reset.
   const catCheck = await db.query('SELECT count(*) as count FROM categories')
   const countVal = Number((catCheck.rows[0] as Record<string, unknown>)?.count ?? 0)
   if (countVal === 0) {
-    await seedInitialInventory(db)
+    await seedInitialReferenceData(db)
   }
 }
 
-async function seedInitialInventory(db: PGlite) {
+async function seedInitialReferenceData(db: PGlite) {
   await db.exec(`
     INSERT INTO categories (id, name_ar, description) VALUES
       ('cat-1', 'المواد الغذائية والتموينية', 'منتجات البقالة والأغذية الجافة'),
@@ -128,28 +117,6 @@ async function seedInitialInventory(db: PGlite) {
     INSERT INTO warehouses (id, name_ar, is_active) VALUES
       ('wh-1', 'المستودع الرئيسي — المتجر', true),
       ('wh-2', 'مستودع التخزين الخلفي', true);
-
-    -- Products with realistic initial barcodes, images, prices in ILS (₪)
-    INSERT INTO products (id, category_id, unit_id, name_ar, name_en, sku, barcode, cost_price, selling_price, wholesale_price, tax_rate, min_stock, image_url) VALUES
-      ('p-1', 'cat-1', 'u-1', 'أرز بسمتي فاخر 5 كجم', 'Basmati Rice 5kg', 'SKU-1001', '729000100101', 28.50, 39.90, 34.00, 0.17, 10, 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500&auto=format&fit=crop&q=80'),
-      ('p-2', 'cat-1', 'u-1', 'سكر أبيض ناعم 1 كجم', 'White Sugar 1kg', 'SKU-1002', '729000100102', 3.20, 4.90, 4.20, 0.17, 25, 'https://images.unsplash.com/photo-1581441363689-1f3c3c414635?w=500&auto=format&fit=crop&q=80'),
-      ('p-3', 'cat-1', 'u-4', 'زيت نباتي صافي 1.5 لتر', 'Vegetable Oil 1.5L', 'SKU-1003', '729000100103', 12.00, 16.50, 14.50, 0.17, 15, 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=500&auto=format&fit=crop&q=80'),
-      ('p-4', 'cat-2', 'u-1', 'مياه معدنية 6 × 1.5 لتر', 'Mineral Water 6-pack', 'SKU-2001', '729000100201', 8.50, 13.00, 11.00, 0.17, 20, 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=500&auto=format&fit=crop&q=80'),
-      ('p-5', 'cat-2', 'u-1', 'عصير برتقال طبيعي 1 لتر', 'Orange Juice 1L', 'SKU-2002', '729000100202', 6.00, 9.50, 8.00, 0.17, 12, 'https://images.unsplash.com/photo-1613478223719-2ab802602423?w=500&auto=format&fit=crop&q=80'),
-      ('p-6', 'cat-3', 'u-1', 'حليب كامل الدسم 1 لتر', 'Full Cream Milk 1L', 'SKU-3001', '729000100301', 4.80, 6.90, 6.00, 0.17, 30, 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=500&auto=format&fit=crop&q=80'),
-      ('p-7', 'cat-3', 'u-2', 'جبنة صفراء بلدية بالكيلو', 'Local Yellow Cheese', 'SKU-3002', '729000100302', 32.00, 45.00, 39.00, 0.17, 5, 'https://images.unsplash.com/photo-1486297678162-eb2a19b0a32d?w=500&auto=format&fit=crop&q=80'),
-      ('p-8', 'cat-4', 'u-1', 'سائل غسيل الأطباق 750 مل', 'Dishwashing Liquid', 'SKU-4001', '729000100401', 7.20, 11.50, 9.50, 0.17, 15, 'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=500&auto=format&fit=crop&q=80');
-
-    -- Seed initial stock movements ledger (Opening Balance)
-    INSERT INTO stock_movements (id, warehouse_id, product_id, movement_type, quantity, unit_cost, total_cost, reference_type, notes) VALUES
-      ('mov-1', 'wh-1', 'p-1', 'opening', 65, 28.50, 1852.50, 'initial_count', 'رصيد افتتاحي للمستودع الرئيسي'),
-      ('mov-2', 'wh-1', 'p-2', 'opening', 120, 3.20, 384.00, 'initial_count', 'رصيد افتتاحي للمستودع الرئيسي'),
-      ('mov-3', 'wh-1', 'p-3', 'opening', 45, 12.00, 540.00, 'initial_count', 'رصيد افتتاحي للمستودع الرئيسي'),
-      ('mov-4', 'wh-1', 'p-4', 'opening', 80, 8.50, 680.00, 'initial_count', 'رصيد افتتاحي للمستودع الرئيسي'),
-      ('mov-5', 'wh-1', 'p-5', 'opening', 40, 6.00, 240.00, 'initial_count', 'رصيد افتتاحي للمستودع الرئيسي'),
-      ('mov-6', 'wh-1', 'p-6', 'opening', 90, 4.80, 432.00, 'initial_count', 'رصيد افتتاحي للمستودع الرئيسي'),
-      ('mov-7', 'wh-1', 'p-7', 'opening', 18, 32.00, 576.00, 'initial_count', 'رصيد افتتاحي للمستودع الرئيسي'),
-      ('mov-8', 'wh-1', 'p-8', 'opening', 55, 7.20, 396.00, 'initial_count', 'رصيد افتتاحي للمستودع الرئيسي');
   `)
 }
 
@@ -228,8 +195,9 @@ export interface SaleRecord {
   items:          SaleItem[]
 }
 
-export async function fetchProducts(): Promise<ProductWithStock[]> {
+export async function fetchProducts(includeInactive = false): Promise<ProductWithStock[]> {
   const db = await getDb()
+  const activeFilter = includeInactive ? '' : 'WHERE p.is_active = true'
   const query = `
     SELECT 
       p.id,
@@ -254,7 +222,7 @@ export async function fetchProducts(): Promise<ProductWithStock[]> {
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN units u ON p.unit_id = u.id
     LEFT JOIN stock_movements m ON p.id = m.product_id
-    WHERE p.is_active = true
+    ${activeFilter}
     GROUP BY p.id, c.name_ar, u.symbol
     ORDER BY p.name_ar ASC;
   `
@@ -384,17 +352,36 @@ export async function createProduct(input: {
   }
 }
 
-export async function archiveProduct(productId: string): Promise<void> {
+export async function deleteProduct(productId: string): Promise<void> {
   const db = await getDb()
-  const result = await db.query(
-    `UPDATE products SET is_active = false, updated_at = now()
-     WHERE id = $1 AND is_active = true
-     RETURNING id;`,
-    [productId]
-  )
+  await db.exec('BEGIN;')
+  try {
+    const references = await db.query(
+      `SELECT
+        (SELECT count(*) FROM stock_movements WHERE product_id = $1) AS movement_count,
+        (SELECT count(*) FROM sale_items WHERE product_id = $1) AS sale_count;`,
+      [productId]
+    )
+    const row = references.rows[0] as Record<string, unknown> | undefined
+    const movementCount = Number(row?.movement_count ?? 0)
+    const saleCount = Number(row?.sale_count ?? 0)
 
-  if (result.rows.length === 0) {
-    throw new Error('Product not found or already archived.')
+    if (movementCount > 0 || saleCount > 0) {
+      throw new Error('لا يمكن حذف هذا المنتج لارتباطه بحركات مخزون أو مبيعات سابقة. تم الحفاظ على السجلات التاريخية.')
+    }
+
+    const result = await db.query(
+      `DELETE FROM products WHERE id = $1 RETURNING id;`,
+      [productId]
+    )
+    if (result.rows.length === 0) {
+      throw new Error('المنتج غير موجود أو تم حذفه مسبقاً.')
+    }
+
+    await db.exec('COMMIT;')
+  } catch (error) {
+    await db.exec('ROLLBACK;')
+    throw error
   }
 }
 

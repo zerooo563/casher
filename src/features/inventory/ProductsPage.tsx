@@ -6,7 +6,7 @@ import {
   fetchUnits,
   fetchWarehouses,
   createProduct,
-  archiveProduct,
+  deleteProduct,
   updateProductImage,
   addStockAdjustment,
   type ProductWithStock,
@@ -28,7 +28,7 @@ import {
   ImagePlus,
   Camera,
   Check,
-  Archive,
+  Trash2,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -37,8 +37,8 @@ export default function ProductsPage() {
 
   // Queries
   const { data: products = [], isLoading } = useQuery({
-    queryKey: ['products'],
-    queryFn: fetchProducts,
+    queryKey: ['products', 'management'],
+    queryFn: () => fetchProducts(true),
   })
 
   const { data: categories = [] } = useQuery({
@@ -63,7 +63,7 @@ export default function ProductsPage() {
   const [showAddModal, setShowAddModal]     = useState(false)
   const [adjustProduct, setAdjustProduct]   = useState<ProductWithStock | null>(null)
   const [editImageProduct, setEditImageProduct] = useState<ProductWithStock | null>(null)
-  const [productToArchive, setProductToArchive] = useState<ProductWithStock | null>(null)
+  const [productToDelete, setProductToDelete] = useState<ProductWithStock | null>(null)
   const [tempImageUrl, setTempImageUrl]     = useState<string | null>(null)
   const [imageError, setImageError]         = useState<string | null>(null)
   const [isCompressing, setIsCompressing]   = useState(false)
@@ -124,14 +124,14 @@ export default function ProductsPage() {
     },
   })
 
-  const archiveProductMutation = useMutation({
-    mutationFn: archiveProduct,
+  const deleteProductMutation = useMutation({
+    mutationFn: deleteProduct,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
-      setProductToArchive(null)
+      setProductToDelete(null)
     },
     onError: (error) => {
-      alert(`تعذر أرشفة المنتج: ${String(error)}`)
+      alert(String(error))
     },
   })
 
@@ -199,10 +199,11 @@ export default function ProductsPage() {
   }, [products, searchTerm, selectedCategory, onlyLowStock])
 
   // Summary Metrics
-  const totalItemsCount = products.length
-  const totalStockUnits = products.reduce((acc, p) => acc + p.current_stock, 0)
-  const totalValuation = products.reduce((acc, p) => acc + p.total_valuation, 0)
-  const lowStockCount = products.filter((p) => p.current_stock <= p.min_stock).length
+  const activeProducts = products.filter((product) => product.is_active)
+  const totalItemsCount = activeProducts.length
+  const totalStockUnits = activeProducts.reduce((acc, p) => acc + p.current_stock, 0)
+  const totalValuation = activeProducts.reduce((acc, p) => acc + p.total_valuation, 0)
+  const lowStockCount = activeProducts.filter((p) => p.current_stock <= p.min_stock).length
 
   return (
     <div className="space-y-6">
@@ -213,6 +214,9 @@ export default function ProductsPage() {
           <h1 className="text-2xl font-bold text-foreground">إدارة المنتجات والمخزون</h1>
           <p className="text-muted-foreground text-sm mt-1">
             سجل المنتجات الفعلي، مستويات المخزون الحالية، وأسعار الجملة والقطعة
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            بيانات المنتجات محفوظة محلياً على هذا المتصفح والجهاز فقط.
           </p>
         </div>
 
@@ -310,7 +314,7 @@ export default function ProductsPage() {
               onChange={(e) => setSelectedCat(e.target.value)}
               className="bg-transparent focus:outline-none text-xs text-foreground"
             >
-              <option value="all">كل التصنيفات ({toArabicNumerals(products.length)})</option>
+              <option value="all">كل التصنيفات ({toArabicNumerals(activeProducts.length)})</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name_ar}
@@ -367,7 +371,7 @@ export default function ProductsPage() {
                   const isOut = p.current_stock <= 0
 
                   return (
-                    <tr key={p.id} className="hover:bg-muted/30 transition-colors">
+                    <tr key={p.id} className={`hover:bg-muted/30 transition-colors ${!p.is_active ? 'opacity-70' : ''}`}>
                       {/* Image Thumbnail with Direct Click to Edit */}
                       <td className="py-2 px-4">
                         <button
@@ -401,6 +405,9 @@ export default function ProductsPage() {
                       {/* Name */}
                       <td className="py-3 px-4">
                         <div className="font-semibold text-foreground">{p.name_ar}</div>
+                        {!p.is_active && (
+                          <span className="text-[10px] text-muted-foreground">مؤرشف</span>
+                        )}
                         {p.name_en && (
                           <div className="text-[11px] text-muted-foreground font-mono" dir="ltr">
                             {p.name_en}
@@ -465,43 +472,45 @@ export default function ProductsPage() {
                       {/* Actions */}
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
-                          {/* Change Image Button */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditImageProduct(p)
-                              setTempImageUrl(p.image_url)
-                              setImageError(null)
-                            }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border border-border bg-card hover:bg-muted text-foreground transition-colors shadow-xs"
-                            title="إضافة أو تعديل صورة المنتج"
-                          >
-                            <Camera className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span>الصورة</span>
-                          </button>
+                          {p.is_active && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditImageProduct(p)
+                                  setTempImageUrl(p.image_url)
+                                  setImageError(null)
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border border-border bg-card hover:bg-muted text-foreground transition-colors shadow-xs"
+                                title="إضافة أو تعديل صورة المنتج"
+                              >
+                                <Camera className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>الصورة</span>
+                              </button>
 
-                          {/* Adjustment Button */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAdjustProduct(p)
-                              if (warehouses.length > 0) setAdjWh(warehouses[0].id)
-                            }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border border-border bg-card hover:bg-muted text-foreground transition-colors shadow-xs"
-                            title="تسوية مخزنية سريعة"
-                          >
-                            <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span>تسوية</span>
-                          </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAdjustProduct(p)
+                                  if (warehouses.length > 0) setAdjWh(warehouses[0].id)
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border border-border bg-card hover:bg-muted text-foreground transition-colors shadow-xs"
+                                title="تسوية مخزنية سريعة"
+                              >
+                                <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>تسوية</span>
+                              </button>
+                            </>
+                          )}
 
                           <button
                             type="button"
-                            onClick={() => setProductToArchive(p)}
+                            onClick={() => setProductToDelete(p)}
                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border border-destructive/30 bg-card hover:bg-destructive/10 text-destructive transition-colors shadow-xs"
-                            title="أرشفة المنتج وإخفاؤه من البيع"
+                            title="حذف المنتج إذا لم يكن مرتبطاً بسجلات تاريخية"
                           >
-                            <Archive className="h-3.5 w-3.5" />
-                            <span>أرشفة</span>
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>حذف</span>
                           </button>
                         </div>
                       </td>
@@ -514,40 +523,40 @@ export default function ProductsPage() {
         )}
       </div>
 
-      {/* MODAL: ARCHIVE PRODUCT */}
-      {productToArchive && (
+      {/* MODAL: DELETE PRODUCT */}
+      {productToDelete && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="archive-product-title"
+            aria-labelledby="delete-product-title"
             className="bg-card border border-border rounded-xl w-full max-w-sm shadow-xl overflow-hidden"
           >
             <div className="p-5 space-y-3">
-              <h3 id="archive-product-title" className="font-bold text-base text-foreground">
-                أرشفة المنتج؟
+              <h3 id="delete-product-title" className="font-bold text-base text-foreground">
+                حذف المنتج؟
               </h3>
               <p className="text-sm text-muted-foreground">
-                سيتم إخفاء «{productToArchive.name_ar}» من إدارة المخزون والبيع والبحث بالباركود.
-                ستبقى حركاته ومبيعاته السابقة محفوظة، ولن يُحذف المنتج نهائياً.
+                سيُحذف «{productToDelete.name_ar}» نهائياً من قاعدة البيانات المحلية على هذا الجهاز.
+                لا يمكن حذف صنف مرتبط بحركة مخزون أو مبيعات؛ ستبقى السجلات التاريخية محفوظة.
               </p>
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  disabled={archiveProductMutation.isPending}
-                  onClick={() => setProductToArchive(null)}
+                  disabled={deleteProductMutation.isPending}
+                  onClick={() => setProductToDelete(null)}
                   className="px-4 py-2 rounded-lg border border-border text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
                 >
                   إلغاء
                 </button>
                 <button
                   type="button"
-                  disabled={archiveProductMutation.isPending}
-                  onClick={() => archiveProductMutation.mutate(productToArchive.id)}
+                  disabled={deleteProductMutation.isPending}
+                  onClick={() => deleteProductMutation.mutate(productToDelete.id)}
                   className="px-4 py-2 rounded-lg bg-destructive text-destructive-foreground text-xs font-bold hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  <Archive className="h-4 w-4" />
-                  <span>{archiveProductMutation.isPending ? 'جارٍ الأرشفة...' : 'تأكيد الأرشفة'}</span>
+                  <Trash2 className="h-4 w-4" />
+                  <span>{deleteProductMutation.isPending ? 'جارٍ الحذف...' : 'حذف نهائياً'}</span>
                 </button>
               </div>
             </div>

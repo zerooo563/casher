@@ -51,7 +51,7 @@ export default function DashboardPage() {
   // Queries
   const { data: products = [], isLoading } = useQuery({
     queryKey: ['products'],
-    queryFn: fetchProducts,
+    queryFn: () => fetchProducts(),
   })
 
   const { data: categories = [] } = useQuery({
