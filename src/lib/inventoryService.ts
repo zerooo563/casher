@@ -95,11 +95,54 @@ async function initSchema(db: PGlite) {
     // columns already exist, ignore
   }
 
+  await ensureUniqueProductBarcodes(db)
+
   // Seed lookup data only. Product databases start empty; existing data is never reset.
   const catCheck = await db.query('SELECT count(*) as count FROM categories')
   const countVal = Number((catCheck.rows[0] as Record<string, unknown>)?.count ?? 0)
   if (countVal === 0) {
     await seedInitialReferenceData(db)
+  }
+}
+
+async function ensureUniqueProductBarcodes(db: PGlite) {
+  await db.exec('BEGIN;')
+  try {
+    const migrationId = 'unique-product-barcodes-v1'
+    const migration = await db.query(
+      `SELECT id FROM app_migrations WHERE id = $1;`,
+      [migrationId]
+    )
+    if (migration.rows.length === 0) {
+      // Keep each product and its history; only ambiguous duplicate barcode values are cleared.
+      await db.exec(`
+        WITH ranked_barcodes AS (
+          SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY TRIM(barcode)
+            ORDER BY created_at ASC, id ASC
+          ) AS duplicate_rank
+          FROM products
+          WHERE barcode IS NOT NULL AND TRIM(barcode) <> ''
+        )
+        UPDATE products
+        SET barcode = NULL
+        WHERE id IN (
+          SELECT id FROM ranked_barcodes WHERE duplicate_rank > 1
+        );
+      `)
+    }
+    await db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS products_barcode_trim_unique_idx
+        ON products (TRIM(barcode))
+        WHERE barcode IS NOT NULL AND TRIM(barcode) <> '';
+    `)
+    if (migration.rows.length === 0) {
+      await db.query(`INSERT INTO app_migrations (id) VALUES ($1);`, [migrationId])
+    }
+    await db.exec('COMMIT;')
+  } catch (error) {
+    await db.exec('ROLLBACK;')
+    throw error
   }
 }
 
@@ -326,7 +369,7 @@ export async function findProductByBarcode(barcode: string): Promise<ProductWith
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN units u ON p.unit_id = u.id
     LEFT JOIN stock_movements m ON p.id = m.product_id
-    WHERE p.is_active = true AND (p.barcode = $1 OR p.sku = $1)
+    WHERE p.is_active = true AND (TRIM(p.barcode) = TRIM($1) OR p.sku = TRIM($1))
     GROUP BY p.id, c.name_ar, u.symbol
     LIMIT 1;
   `
@@ -429,6 +472,13 @@ export async function createProduct(input: {
     return id
   } catch (err) {
     await db.exec('ROLLBACK;')
+    const databaseError = err as { code?: unknown; constraint?: unknown }
+    if (
+      databaseError.code === '23505' &&
+      databaseError.constraint === 'products_barcode_trim_unique_idx'
+    ) {
+      throw new Error('هذا الباركود مسجل مسبقاً لمنتج آخر.')
+    }
     throw err
   }
 }
