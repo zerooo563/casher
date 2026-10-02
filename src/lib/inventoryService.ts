@@ -254,6 +254,7 @@ export async function fetchProducts(): Promise<ProductWithStock[]> {
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN units u ON p.unit_id = u.id
     LEFT JOIN stock_movements m ON p.id = m.product_id
+    WHERE p.is_active = true
     GROUP BY p.id, c.name_ar, u.symbol
     ORDER BY p.name_ar ASC;
   `
@@ -287,7 +288,7 @@ export async function findProductByBarcode(barcode: string): Promise<ProductWith
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN units u ON p.unit_id = u.id
     LEFT JOIN stock_movements m ON p.id = m.product_id
-    WHERE p.barcode = $1 OR p.sku = $1
+    WHERE p.is_active = true AND (p.barcode = $1 OR p.sku = $1)
     GROUP BY p.id, c.name_ar, u.symbol
     LIMIT 1;
   `
@@ -383,6 +384,20 @@ export async function createProduct(input: {
   }
 }
 
+export async function archiveProduct(productId: string): Promise<void> {
+  const db = await getDb()
+  const result = await db.query(
+    `UPDATE products SET is_active = false, updated_at = now()
+     WHERE id = $1 AND is_active = true
+     RETURNING id;`,
+    [productId]
+  )
+
+  if (result.rows.length === 0) {
+    throw new Error('Product not found or already archived.')
+  }
+}
+
 export async function createSale(input: {
   items: Array<{
     product_id:   string
@@ -411,6 +426,14 @@ export async function createSale(input: {
 
     // Insert sale items + deduct from stock
     for (const item of input.items) {
+      const activeProduct = await db.query(
+        `SELECT id FROM products WHERE id = $1 AND is_active = true;`,
+        [item.product_id]
+      )
+      if (activeProduct.rows.length === 0) {
+        throw new Error('Cannot sell an archived or missing product.')
+      }
+
       const itemId = `si-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
       const totalPrice = item.quantity * item.unit_price
 

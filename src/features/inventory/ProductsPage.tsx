@@ -6,6 +6,7 @@ import {
   fetchUnits,
   fetchWarehouses,
   createProduct,
+  archiveProduct,
   updateProductImage,
   addStockAdjustment,
   type ProductWithStock,
@@ -27,6 +28,7 @@ import {
   ImagePlus,
   Camera,
   Check,
+  Archive,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -61,6 +63,7 @@ export default function ProductsPage() {
   const [showAddModal, setShowAddModal]     = useState(false)
   const [adjustProduct, setAdjustProduct]   = useState<ProductWithStock | null>(null)
   const [editImageProduct, setEditImageProduct] = useState<ProductWithStock | null>(null)
+  const [productToArchive, setProductToArchive] = useState<ProductWithStock | null>(null)
   const [tempImageUrl, setTempImageUrl]     = useState<string | null>(null)
   const [imageError, setImageError]         = useState<string | null>(null)
   const [isCompressing, setIsCompressing]   = useState(false)
@@ -118,6 +121,17 @@ export default function ProductsPage() {
       setAdjustProduct(null)
       setAdjQty('1')
       setAdjNotes('')
+    },
+  })
+
+  const archiveProductMutation = useMutation({
+    mutationFn: archiveProduct,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] })
+      setProductToArchive(null)
+    },
+    onError: (error) => {
+      alert(`تعذر أرشفة المنتج: ${String(error)}`)
     },
   })
 
@@ -479,6 +493,16 @@ export default function ProductsPage() {
                             <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
                             <span>تسوية</span>
                           </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setProductToArchive(p)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border border-destructive/30 bg-card hover:bg-destructive/10 text-destructive transition-colors shadow-xs"
+                            title="أرشفة المنتج وإخفاؤه من البيع"
+                          >
+                            <Archive className="h-3.5 w-3.5" />
+                            <span>أرشفة</span>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -489,6 +513,47 @@ export default function ProductsPage() {
           </div>
         )}
       </div>
+
+      {/* MODAL: ARCHIVE PRODUCT */}
+      {productToArchive && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="archive-product-title"
+            className="bg-card border border-border rounded-xl w-full max-w-sm shadow-xl overflow-hidden"
+          >
+            <div className="p-5 space-y-3">
+              <h3 id="archive-product-title" className="font-bold text-base text-foreground">
+                أرشفة المنتج؟
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                سيتم إخفاء «{productToArchive.name_ar}» من إدارة المخزون والبيع والبحث بالباركود.
+                ستبقى حركاته ومبيعاته السابقة محفوظة، ولن يُحذف المنتج نهائياً.
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={archiveProductMutation.isPending}
+                  onClick={() => setProductToArchive(null)}
+                  className="px-4 py-2 rounded-lg border border-border text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="button"
+                  disabled={archiveProductMutation.isPending}
+                  onClick={() => archiveProductMutation.mutate(productToArchive.id)}
+                  className="px-4 py-2 rounded-lg bg-destructive text-destructive-foreground text-xs font-bold hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Archive className="h-4 w-4" />
+                  <span>{archiveProductMutation.isPending ? 'جارٍ الأرشفة...' : 'تأكيد الأرشفة'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: EDIT PRODUCT IMAGE */}
       {editImageProduct && (
