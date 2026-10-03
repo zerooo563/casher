@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   fetchProducts,
   fetchCategories,
+  createCategory,
   fetchUnits,
   fetchWarehouses,
   createProduct,
@@ -10,6 +11,7 @@ import {
   updateProductImage,
   addStockAdjustment,
   type ProductWithStock,
+  type CategoryItem,
 } from '@/lib/inventoryService'
 import { toArabicNumerals, formatCurrency } from '@/lib/utils'
 import { compressImage } from '@/lib/imageUtils'
@@ -73,6 +75,9 @@ export default function ProductsPage() {
   const [newProdSku, setNewProdSku]             = useState('')
   const [newProdBarcode, setNewProdBarcode]     = useState('')
   const [newProdCat, setNewProdCat]             = useState('')
+  const [newCategoryName, setNewCategoryName]   = useState('')
+  const [showNewCategoryForm, setShowNewCategoryForm] = useState(false)
+  const [categoryFormError, setCategoryFormError] = useState<string | null>(null)
   const [newProdUnit, setNewProdUnit]           = useState('')
   const [newProdCost, setNewProdCost]           = useState('')
   const [newProdPrice, setNewProdPrice]         = useState('')
@@ -95,6 +100,22 @@ export default function ProductsPage() {
   const modalImageInputRef = useRef<HTMLInputElement>(null)
 
   // Mutations
+  const addCategoryMutation = useMutation({
+    mutationFn: createCategory,
+    onSuccess: (category) => {
+      queryClient.setQueryData<CategoryItem[]>(['categories'], (current = []) =>
+        [...current, category].sort((a, b) => a.name_ar.localeCompare(b.name_ar, 'ar'))
+      )
+      void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      setNewProdCat(category.id)
+      setNewCategoryName('')
+      setCategoryFormError(null)
+      setShowNewCategoryForm(false)
+    },
+    onError: (error) =>
+      setCategoryFormError(error instanceof Error ? error.message : String(error)),
+  })
+
   const addProductMutation = useMutation({
     mutationFn: createProduct,
     onSuccess: () => {
@@ -844,7 +865,10 @@ export default function ProductsPage() {
                   <label className="text-xs font-semibold text-foreground">التصنيف *</label>
                   <select
                     value={newProdCat}
-                    onChange={(e) => setNewProdCat(e.target.value)}
+                    onChange={(e) => {
+                      setNewProdCat(e.target.value)
+                      setCategoryFormError(null)
+                    }}
                     required
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   >
@@ -854,6 +878,69 @@ export default function ProductsPage() {
                       </option>
                     ))}
                   </select>
+                  {!showNewCategoryForm ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCategoryFormError(null)
+                        setShowNewCategoryForm(true)
+                      }}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>إضافة تصنيف جديد</span>
+                    </button>
+                  ) : (
+                    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                      <label className="block text-xs font-medium text-foreground" htmlFor="new-category-name">
+                        اسم التصنيف الجديد
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          id="new-category-name"
+                          type="text"
+                          autoFocus
+                          value={newCategoryName}
+                          onChange={(e) => {
+                            setNewCategoryName(e.target.value)
+                            setCategoryFormError(null)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              addCategoryMutation.mutate(newCategoryName)
+                            }
+                          }}
+                          maxLength={120}
+                          placeholder="اكتب اسم التصنيف"
+                          className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => addCategoryMutation.mutate(newCategoryName)}
+                          disabled={addCategoryMutation.isPending || !newCategoryName.trim()}
+                          className="shrink-0 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                        >
+                          {addCategoryMutation.isPending ? 'جارٍ الحفظ...' : 'حفظ التصنيف'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowNewCategoryForm(false)
+                            setNewCategoryName('')
+                            setCategoryFormError(null)
+                          }}
+                          aria-label="إلغاء إضافة التصنيف"
+                          className="shrink-0 rounded-md border border-border px-2 text-muted-foreground hover:bg-muted"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      {categoryFormError && (
+                        <p className="text-xs text-destructive" role="alert">{categoryFormError}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-1">

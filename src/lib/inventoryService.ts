@@ -96,6 +96,7 @@ async function initSchema(db: PGlite) {
   }
 
   await ensureUniqueProductBarcodes(db)
+  await ensureUniqueCategoryNames(db)
 
   // Seed lookup data only. Product databases start empty; existing data is never reset.
   const catCheck = await db.query('SELECT count(*) as count FROM categories')
@@ -135,6 +136,59 @@ async function ensureUniqueProductBarcodes(db: PGlite) {
       CREATE UNIQUE INDEX IF NOT EXISTS products_barcode_trim_unique_idx
         ON products (TRIM(barcode))
         WHERE barcode IS NOT NULL AND TRIM(barcode) <> '';
+    `)
+    if (migration.rows.length === 0) {
+      await db.query(`INSERT INTO app_migrations (id) VALUES ($1);`, [migrationId])
+    }
+    await db.exec('COMMIT;')
+  } catch (error) {
+    await db.exec('ROLLBACK;')
+    throw error
+  }
+}
+
+async function ensureUniqueCategoryNames(db: PGlite) {
+  await db.exec('BEGIN;')
+  try {
+    const migrationId = 'unique-category-names-v1'
+    const migration = await db.query(
+      `SELECT id FROM app_migrations WHERE id = $1;`,
+      [migrationId]
+    )
+    if (migration.rows.length === 0) {
+      await db.exec(`
+        WITH ranked_categories AS (
+          SELECT id, FIRST_VALUE(id) OVER (
+            PARTITION BY LOWER(TRIM(name_ar))
+            ORDER BY id ASC
+          ) AS canonical_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY LOWER(TRIM(name_ar))
+            ORDER BY id ASC
+          ) AS duplicate_rank
+          FROM categories
+        )
+        UPDATE products p
+        SET category_id = ranked.canonical_id
+        FROM ranked_categories ranked
+        WHERE p.category_id = ranked.id AND ranked.duplicate_rank > 1;
+
+        WITH ranked_categories AS (
+          SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY LOWER(TRIM(name_ar))
+            ORDER BY id ASC
+          ) AS duplicate_rank
+          FROM categories
+        )
+        DELETE FROM categories
+        WHERE id IN (
+          SELECT id FROM ranked_categories WHERE duplicate_rank > 1
+        );
+      `)
+    }
+    await db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS categories_name_normalized_unique_idx
+        ON categories (LOWER(TRIM(name_ar)));
     `)
     if (migration.rows.length === 0) {
       await db.query(`INSERT INTO app_migrations (id) VALUES ($1);`, [migrationId])
@@ -620,6 +674,43 @@ export async function fetchCategories(): Promise<CategoryItem[]> {
   const db = await getDb()
   const res = await db.query('SELECT * FROM categories ORDER BY name_ar ASC')
   return res.rows as unknown as CategoryItem[]
+}
+
+export async function createCategory(name: string): Promise<CategoryItem> {
+  const normalizedName = name.trim()
+  if (!normalizedName) {
+    throw new Error('يرجى إدخال اسم التصنيف.')
+  }
+
+  const db = await getDb()
+  const id = `cat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  await db.exec('BEGIN;')
+  try {
+    const duplicate = await db.query(
+      `SELECT id FROM categories WHERE LOWER(TRIM(name_ar)) = LOWER($1) LIMIT 1;`,
+      [normalizedName]
+    )
+    if (duplicate.rows.length > 0) {
+      throw new Error('يوجد تصنيف بهذا الاسم بالفعل.')
+    }
+
+    await db.query(
+      `INSERT INTO categories (id, name_ar) VALUES ($1, $2);`,
+      [id, normalizedName]
+    )
+    await db.exec('COMMIT;')
+    return { id, name_ar: normalizedName, description: null }
+  } catch (error) {
+    await db.exec('ROLLBACK;')
+    const databaseError = error as { code?: unknown; constraint?: unknown }
+    if (
+      databaseError.code === '23505' &&
+      databaseError.constraint === 'categories_name_normalized_unique_idx'
+    ) {
+      throw new Error('يوجد تصنيف بهذا الاسم بالفعل.')
+    }
+    throw error
+  }
 }
 
 export async function fetchUnits(): Promise<UnitItem[]> {
