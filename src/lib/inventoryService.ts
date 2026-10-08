@@ -432,7 +432,7 @@ export async function findProductByBarcode(barcode: string): Promise<ProductWith
   return res.rows[0] as unknown as ProductWithStock
 }
 
-export async function fetchStockMovements(productId?: string): Promise<StockMovementRecord[]> {
+export async function fetchStockMovements(productId?: string, limit = 1000): Promise<StockMovementRecord[]> {
   const db = await getDb()
   let query = `
     SELECT 
@@ -456,7 +456,8 @@ export async function fetchStockMovements(productId?: string): Promise<StockMove
     query += ` WHERE m.product_id = $1`
     params.push(productId)
   }
-  query += ` ORDER BY m.created_at DESC LIMIT 100;`
+  query += ` ORDER BY m.created_at DESC LIMIT $${params.length + 1};`
+  params.push(limit)
 
   const res = await db.query(query, params)
   return res.rows as unknown as StockMovementRecord[]

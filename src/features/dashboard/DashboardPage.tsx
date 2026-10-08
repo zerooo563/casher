@@ -13,8 +13,10 @@ import { toArabicNumerals, formatCurrency } from '@/lib/utils'
 import { useTenant } from '@/hooks/useTenant'
 import { APP_NAME } from '@/config/constants'
 import { ReceiptModal } from '@/components/shared/ReceiptModal'
+import { CameraBarcodeScannerModal } from '@/components/shared/CameraBarcodeScannerModal'
 import {
   ScanLine,
+  Camera,
   ShoppingCart,
   Trash2,
   Plus,
@@ -77,6 +79,7 @@ export default function DashboardPage() {
   const [previewImage, setPreviewImage]   = useState<{ url: string; name: string } | null>(null)
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [mobileTab, setMobileTab]         = useState<'products' | 'cart'>('products')
+  const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false)
 
   const barcodeRef = useRef<HTMLInputElement>(null)
   const searchRef  = useRef<HTMLInputElement>(null)
@@ -309,6 +312,15 @@ export default function DashboardPage() {
             aria-label="إعادة تركيز قارئ الباركود"
           >
             <ScanLine className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsCameraScannerOpen(true)}
+            className="px-3.5 py-2.5 rounded-xl border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 transition-colors shrink-0 flex items-center justify-center gap-1.5 text-xs font-bold"
+            title="مسح الباركود باستخدام كاميرا الهاتف أو الحاسوب"
+          >
+            <Camera className="h-4 w-4" />
+            <span className="hidden sm:inline">مسح بالكاميرا</span>
           </button>
         </div>
 
@@ -876,6 +888,15 @@ export default function DashboardPage() {
           onClose={() => setCompletedSale(null)}
         />
       )}
+
+      {/* Camera Barcode Scanner Modal */}
+      <CameraBarcodeScannerModal
+        isOpen={isCameraScannerOpen}
+        onClose={() => setIsCameraScannerOpen(false)}
+        onScan={(barcode) => addByBarcode(barcode)}
+        continuous={true}
+        title="قارئ الباركود عبر الكاميرا (نقاط البيع)"
+      />
 
     </div>
   )
