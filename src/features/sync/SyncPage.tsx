@@ -193,11 +193,13 @@ export default function SyncPage() {
               <div className="h-2 rounded-full bg-muted overflow-hidden">
                 <div
                   className="h-full bg-primary transition-all"
-                  style={{ width: `${Math.round((pushProgress.batch / pushProgress.batches) * 100)}%` }}
+                  style={{ width: `${Math.min(100, Math.round(((pushProgress.batch + pushProgress.phaseDone / Math.max(1, pushProgress.phaseTotal)) / Math.max(1, pushProgress.batches)) * 100))}%` }}
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                الدفعة {toArabicNumerals(pushProgress.batch)} من {toArabicNumerals(pushProgress.batches)}
+                {pushProgress.phase === 'images'
+                  ? `جارٍ رفع صور الدفعة ${toArabicNumerals(pushProgress.batch + 1)} من ${toArabicNumerals(pushProgress.batches)}: ${toArabicNumerals(pushProgress.phaseDone)} من ${toArabicNumerals(pushProgress.phaseTotal)}`
+                  : `الدفعة ${toArabicNumerals(pushProgress.batch)} من ${toArabicNumerals(pushProgress.batches)}`}
                 {' '}— تم قبول {toArabicNumerals(pushProgress.processed)} منتج حتى الآن
               </p>
             </div>
