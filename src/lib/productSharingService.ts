@@ -21,6 +21,10 @@ export const SHARED_WORKSPACE_ID = 'a1000000-0000-0000-0000-000000000001'
 
 const MAX_SHARED_PRODUCTS = 10_000
 const PUSH_BATCH_SIZE = 500
+// Phone networks choke on parallel uploads — keep image uploads sequential-ish.
+const IMAGE_UPLOAD_CONCURRENCY = 6
+const RPC_MAX_ATTEMPTS = 3
+const RPC_RETRY_DELAY_MS = 1500
 const MAX_IMAGE_BYTES = 500_000
 
 type ProductToShare = Omit<SharedProductCatalogItem, 'updated_at'>
@@ -29,6 +33,9 @@ export interface PushProgress {
   batch:     number   // finished batches
   batches:   number   // total batches
   processed: number   // rows accepted so far
+  phase:     'images' | 'upload'
+  phaseDone: number
+  phaseTotal: number
 }
 
 export interface PushResult {
@@ -47,6 +54,36 @@ function requireConfigured(): void {
   if (!isSupabaseConfigured) {
     throw new Error('المزامنة السحابية غير مهيأة: أضف VITE_SUPABASE_URL والمفتاح في ملف .env.local ثم أعد تشغيل التطبيق.')
   }
+}
+
+/** Run async jobs with bounded concurrency (safe on phones). */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+  onStep?: (done: number, total: number) => void
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  let done = 0
+  const runner = async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await worker(items[index], index)
+      done++
+      onStep?.(done, items.length)
+    }
+  }
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => runner()
+  )
+  await Promise.all(runners)
+  return results
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function safeFileName(productId: string, mimeType: string): string {
@@ -184,37 +221,73 @@ export async function publishSharedCatalog(
     const batchIndex = Math.floor(index / PUSH_BATCH_SIZE)
     const batches = Math.ceil(products.length / PUSH_BATCH_SIZE)
 
-    const payload: ProductToShare[] = await Promise.all(batch.map(async (product) => {
-      const unit = product.unit_id ? units.get(product.unit_id) : undefined
-      if (!unit) throw new Error(`وحدة قياس المنتج «${product.name_ar}» غير موجودة.`)
-      return {
-        source_product_id: product.id,
-        name_ar: product.name_ar,
-        name_en: product.name_en,
-        sku: product.sku,
-        barcode: product.barcode,
-        category_name: product.category_id ? categories.get(product.category_id) ?? null : null,
-        unit_name: unit.name_ar,
-        unit_symbol: unit.symbol,
-        cost_price: product.cost_price,
-        selling_price: product.selling_price,
-        wholesale_price: product.wholesale_price,
-        tax_rate: product.tax_rate,
-        min_stock: product.min_stock,
-        image_url: await makeSharedImageUrl(product.id, product.image_url),
-      } satisfies ProductToShare
-    }))
+    const report = (phase: PushProgress['phase'], phaseDone: number, phaseTotal: number) =>
+      onProgress?.({
+        batch: batchIndex,
+        batches,
+        processed: aggregate.processed,
+        phase,
+        phaseDone,
+        phaseTotal,
+      })
 
-    const { data, error } = await supabase.rpc('publish_shared_product_catalog', {
-      p_products: payload,
-    })
-    if (error) throw new Error(`تعذر دفع الدفعة ${batchIndex + 1} من ${batches}: ${error.message}`)
-    if (data === null) throw new Error(`لم يُرجع Supabase نتيجة الدفعة ${batchIndex + 1}.`)
+    // Images upload with bounded concurrency so phones don't stall.
+    const payload: ProductToShare[] = await mapWithConcurrency(
+      batch,
+      IMAGE_UPLOAD_CONCURRENCY,
+      async (product) => {
+        const unit = product.unit_id ? units.get(product.unit_id) : undefined
+        if (!unit) throw new Error(`وحدة قياس المنتج «${product.name_ar}» غير موجودة.`)
+        return {
+          source_product_id: product.id,
+          name_ar: product.name_ar,
+          name_en: product.name_en,
+          sku: product.sku,
+          barcode: product.barcode,
+          category_name: product.category_id ? categories.get(product.category_id) ?? null : null,
+          unit_name: unit.name_ar,
+          unit_symbol: unit.symbol,
+          cost_price: product.cost_price,
+          selling_price: product.selling_price,
+          wholesale_price: product.wholesale_price,
+          tax_rate: product.tax_rate,
+          min_stock: product.min_stock,
+          image_url: await makeSharedImageUrl(product.id, product.image_url),
+        } satisfies ProductToShare
+      },
+      (done, total) => report('images', done, total)
+    )
 
-    const batchResult = parsePublishResponse(data, batchIndex)
+    // The server reports bad rows as skipped; transport errors are retried.
+    let batchResult: PushResult | null = null
+    let lastError: unknown = null
+    for (let attempt = 1; attempt <= RPC_MAX_ATTEMPTS; attempt++) {
+      report('upload', attempt, RPC_MAX_ATTEMPTS)
+      const { data, error } = await supabase.rpc('publish_shared_product_catalog', {
+        p_products: payload,
+      })
+      if (!error && data !== null) {
+        batchResult = parsePublishResponse(data, batchIndex)
+        break
+      }
+      lastError = error ?? new Error(`لم يُرجع Supabase نتيجة الدفعة ${batchIndex + 1}.`)
+      if (attempt < RPC_MAX_ATTEMPTS) await delay(RPC_RETRY_DELAY_MS * attempt)
+    }
+    if (!batchResult) {
+      const reason = lastError instanceof Error ? lastError.message : String(lastError)
+      throw new Error(`تعذر دفع الدفعة ${batchIndex + 1} من ${batches} بعد ${RPC_MAX_ATTEMPTS} محاولات: ${reason}`)
+    }
+
     aggregate.processed += batchResult.processed
     aggregate.skipped.push(...batchResult.skipped)
-    onProgress?.({ batch: batchIndex + 1, batches, processed: aggregate.processed })
+    onProgress?.({
+      batch: batchIndex + 1,
+      batches,
+      processed: aggregate.processed,
+      phase: 'upload',
+      phaseDone: 1,
+      phaseTotal: 1,
+    })
   }
 
   return aggregate
