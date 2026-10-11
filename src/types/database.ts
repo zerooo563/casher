@@ -280,6 +280,67 @@ export interface Database {
           }
         ]
       }
+      shared_product_catalog: {
+        Row: {
+          tenant_id:         string
+          source_product_id: string
+          name_ar:           string
+          name_en:           string | null
+          sku:               string
+          barcode:           string | null
+          category_name:     string | null
+          unit_name:         string
+          unit_symbol:       string
+          cost_price:        number
+          selling_price:     number
+          wholesale_price:   number
+          tax_rate:          number
+          min_stock:         number
+          image_url:         string | null
+          updated_at:        string
+        }
+        Insert: {
+          tenant_id:         string
+          source_product_id: string
+          name_ar:           string
+          name_en?:          string | null
+          sku:               string
+          barcode?:          string | null
+          category_name?:    string | null
+          unit_name:         string
+          unit_symbol:       string
+          cost_price?:       number
+          selling_price:     number
+          wholesale_price?:  number
+          tax_rate?:         number
+          min_stock?:        number
+          image_url?:        string | null
+        }
+        Update: {
+          name_ar?:         string
+          name_en?:         string | null
+          sku?:             string
+          barcode?:         string | null
+          category_name?:   string | null
+          unit_name?:       string
+          unit_symbol?:     string
+          cost_price?:      number
+          selling_price?:   number
+          wholesale_price?: number
+          tax_rate?:        number
+          min_stock?:       number
+          image_url?:       string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_product_catalog_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
     }
     Views: Record<string, never>
     Functions: {
@@ -297,6 +358,14 @@ export interface Database {
       }
       custom_access_token_hook: {
         Args: { event: Json }
+        Returns: Json
+      }
+      publish_shared_product_catalog: {
+        Args: { p_products: Json }
+        Returns: Json
+      }
+      get_shared_product_catalog: {
+        Args: Record<string, never>
         Returns: Json
       }
     }

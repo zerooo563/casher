@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { formatCurrency } from '@/lib/utils'
 import type { SaleRecord } from '@/lib/inventoryService'
+import { printDocument } from '@/lib/printDocument'
 import { X, Printer, CheckCircle2 } from 'lucide-react'
 
 interface ReceiptModalProps {
@@ -137,13 +138,9 @@ export function ReceiptModal({ sale, storeName, onClose }: ReceiptModalProps) {
 
   // 1. Direct Print (Standard Printer / Thermal / Save to PDF)
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank', 'width=450,height=750')
-    if (!printWindow) return
-
-    const html = getReceiptHtml()
-    printWindow.document.write(html)
-    printWindow.document.write('<script>window.onload = () => { window.print(); window.close(); }<\/script>')
-    printWindow.document.close()
+    printDocument(getReceiptHtml(), () => {
+      alert('تعذر تشغيل طباعة الوصل. تحقق من أن المتصفح يسمح بالطباعة.')
+    })
   }
 
   return (

@@ -19,12 +19,13 @@ export function Header() {
         {toArabicNumerals(dateStr)}
       </span>
 
-      {/* Currency badge */}
-      {tenant && (
-        <span className="text-xs font-medium bg-muted text-muted-foreground rounded px-2 py-1">
-          {tenant.settings.currency} {tenant.settings.currency_symbol}
-        </span>
-      )}
+      <div className="flex items-center gap-3">
+        {tenant && (
+          <span className="text-xs font-medium bg-muted text-muted-foreground rounded px-2 py-1">
+            {tenant.settings.currency} {tenant.settings.currency_symbol}
+          </span>
+        )}
+      </div>
     </header>
   )
 }

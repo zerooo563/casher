@@ -34,13 +34,17 @@ jobs:
         run: npm run build
         env:
           VITE_BASE_PATH: /casher/
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
 
       - name: Support direct client-side routes
         run: |
           cp dist/index.html dist/404.html
-          mkdir -p dist/products dist/movements
+          mkdir -p dist/products dist/movements dist/login dist/accounts
           cp dist/index.html dist/products/index.html
           cp dist/index.html dist/movements/index.html
+          cp dist/index.html dist/login/index.html
+          cp dist/index.html dist/accounts/index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
