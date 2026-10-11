@@ -37,6 +37,30 @@ function playBeepSound() {
   }
 }
 
+/** Never leak English library errors to the user — map everything to Arabic. */
+function toArabicCameraError(err: unknown): string {
+  const errStr = String(err)
+  if (errStr.includes('NotAllowedError') || errStr.includes('Permission denied') || errStr.includes('Permission')) {
+    return 'تم رفض إذن الوصول إلى الكاميرا. يرجى السماح بالوصول من إعدادات المتصفح ثم إعادة المحاولة.'
+  }
+  if (errStr.includes('NotFoundError') || errStr.includes('DevicesNotFoundError')) {
+    return 'لم يتم العثور على أي كاميرا متصلة بهذا الجهاز.'
+  }
+  if (errStr.includes('NotReadableError') || errStr.includes('TrackStartError') || errStr.includes('busy') || errStr.includes('in use')) {
+    return 'الكاميرا مستخدمة حالياً في تطبيق آخر. أغلق التطبيق الآخر ثم أعد المحاولة.'
+  }
+  if (errStr.includes('OverconstrainedError') || errStr.includes('Constraint')) {
+    return 'تعذر تشغيل هذه الكاميرا بالتحديد. جرّب زر تبديل الكاميرا أو أعد المحاولة.'
+  }
+  if (errStr.includes('SecurityError') || errStr.includes('secure')) {
+    return 'تشغيل الكاميرا يتطلب اتصالاً آمناً (https). افتح الرابط بـ https://'
+  }
+  if (errStr.includes('ongoing') || errStr.includes('Cannot clear') || errStr.includes('already')) {
+    return 'الكاميرا كانت مشغولة من محاولة سابقة. أغلق النافذة وأعد فتحها.'
+  }
+  return 'تعذر تشغيل الكاميرا. أغلق النافذة وأعد فتحها، وتأكد من إعطاء إذن الكاميرا للمتصفح.'
+}
+
 export function CameraBarcodeScannerModal({
   isOpen,
   onClose,
@@ -52,22 +76,38 @@ export function CameraBarcodeScannerModal({
   const [soundEnabled, setSoundEnabled] = useState(true)
 
   const scannerRef = useRef<Html5Qrcode | null>(null)
-  const isScanningRef = useRef(false)
+  // Every start/stop cycle bumps this; stale async flows abort silently.
+  const generationRef = useRef(0)
+  const lastScannedRef = useRef<string | null>(null)
   const lastScanTimeRef = useRef(0)
   const containerId = 'interactive-camera-barcode-scanner'
 
-  // Safe scanner stopper
-  const stopScannerSafely = useCallback(async () => {
-    if (scannerRef.current && isScanningRef.current) {
-      try {
-        await scannerRef.current.stop()
-      } catch {
-        // already stopped or failed
-      } finally {
-        isScanningRef.current = false
-      }
+  // Fully release the camera and drop the instance. Never throws.
+  const teardownScanner = useCallback(async () => {
+    const gen = generationRef.current
+    const scanner = scannerRef.current
+    scannerRef.current = null
+    if (!scanner) return
+    // Order matters: stop() BEFORE clear() — clear() while scanning throws
+    // "Cannot clear while scan is ongoing".
+    try {
+      await scanner.stop()
+    } catch {
+      // Already stopped, never started, or mid-transition — safe to ignore.
+    }
+    if (generationRef.current !== gen) return
+    try {
+      await scanner.clear()
+    } catch {
+      // Container already gone or nothing to clear — safe to ignore.
     }
   }, [])
+
+  const handleClose = useCallback(() => {
+    generationRef.current += 1
+    setErrorMessage(null)
+    void teardownScanner().then(onClose)
+  }, [onClose, teardownScanner])
 
   // Handle successful scan
   const handleScanSuccess = useCallback(
@@ -77,10 +117,10 @@ export function CameraBarcodeScannerModal({
 
       // Debounce consecutive identical scans within 1.5 seconds to avoid duplicates
       const now = Date.now()
-      if (lastScannedCode === trimmed && now - lastScanTimeRef.current < 1500) {
+      if (lastScannedRef.current === trimmed && now - lastScanTimeRef.current < 1500) {
         return
       }
-
+      lastScannedRef.current = trimmed
       lastScanTimeRef.current = now
       setLastScannedCode(trimmed)
 
@@ -95,42 +135,49 @@ export function CameraBarcodeScannerModal({
       onScan(trimmed)
 
       if (!continuous) {
-        stopScannerSafely().then(onClose)
+        generationRef.current += 1
+        void teardownScanner().then(onClose)
       }
     },
-    [continuous, lastScannedCode, onClose, onScan, soundEnabled, stopScannerSafely]
+    [continuous, onClose, onScan, soundEnabled, teardownScanner]
   )
+  const scanSuccessRef = useRef(handleScanSuccess)
+  scanSuccessRef.current = handleScanSuccess
 
-  // Start scanner with specific camera
+  // Start scanner with specific camera. Always tears down first so no stale
+  // "ongoing scan" state can survive a retry or a camera switch.
   const startCamera = useCallback(
-    async (cameraId?: string) => {
+    async (cameraId?: string, fallbackAttempt = false) => {
+      const gen = ++generationRef.current
+      const alive = () => generationRef.current === gen
+
       setErrorMessage(null)
       setIsInitializing(true)
-      await stopScannerSafely()
+      await teardownScanner()
+      if (!alive()) return
 
       try {
-        if (!scannerRef.current) {
-          scannerRef.current = new Html5Qrcode(containerId, {
-            verbose: false,
-            formatsToSupport: [
-              Html5QrcodeSupportedFormats.EAN_13,
-              Html5QrcodeSupportedFormats.EAN_8,
-              Html5QrcodeSupportedFormats.CODE_128,
-              Html5QrcodeSupportedFormats.CODE_39,
-              Html5QrcodeSupportedFormats.UPC_A,
-              Html5QrcodeSupportedFormats.UPC_E,
-              Html5QrcodeSupportedFormats.QR_CODE,
-              Html5QrcodeSupportedFormats.ITF,
-              Html5QrcodeSupportedFormats.CODABAR,
-            ],
-          })
-        }
+        const scanner = new Html5Qrcode(containerId, {
+          verbose: false,
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.ITF,
+            Html5QrcodeSupportedFormats.CODABAR,
+          ],
+        })
+        scannerRef.current = scanner
 
         const cameraConfig = cameraId
           ? { deviceId: { exact: cameraId } }
           : { facingMode: 'environment' }
 
-        await scannerRef.current.start(
+        await scanner.start(
           cameraConfig,
           {
             fps: 15,
@@ -143,27 +190,33 @@ export function CameraBarcodeScannerModal({
             },
             aspectRatio: 1.3333,
           },
-          handleScanSuccess,
+          (text) => scanSuccessRef.current(text),
           () => {
             // Periodic scan frame without result - ignore
           }
         )
-
-        isScanningRef.current = true
-      } catch (err: unknown) {
-        const errStr = String(err)
-        if (errStr.includes('NotAllowedError') || errStr.includes('Permission')) {
-          setErrorMessage('تم رفض إذن الوصول إلى الكاميرا. يرجى السماح بالوصول من إعدادات المتصفح.')
-        } else if (errStr.includes('NotFoundError') || errStr.includes('DevicesNotFoundError')) {
-          setErrorMessage('لم يتم العثور على أي كاميرا متصلة بهذا الجهاز.')
-        } else {
-          setErrorMessage(`تعذر تشغيل الكاميرا: ${errStr}`)
+        if (!alive()) {
+          await teardownScanner()
+          return
         }
+      } catch (err: unknown) {
+        // iOS often rejects { deviceId: { exact } } — fall back to the rear camera.
+        const errStr = String(err)
+        const isDeviceConstraint =
+          errStr.includes('Overconstrained') || errStr.includes('ConstraintNotSatisfied')
+        if (cameraId && isDeviceConstraint && !fallbackAttempt && alive()) {
+          await startCamera(undefined, true)
+          return
+        }
+        if (!alive()) return
+        await teardownScanner()
+        if (!alive()) return
+        setErrorMessage(toArabicCameraError(err))
       } finally {
-        setIsInitializing(false)
+        if (alive()) setIsInitializing(false)
       }
     },
-    [handleScanSuccess, stopScannerSafely]
+    [teardownScanner]
   )
 
   // Initialization lifecycle
@@ -173,6 +226,8 @@ export function CameraBarcodeScannerModal({
     let isMounted = true
 
     async function init() {
+      setLastScannedCode(null)
+      lastScannedRef.current = null
       try {
         const availableDevices = await Html5Qrcode.getCameras()
         if (!isMounted) return
@@ -202,18 +257,19 @@ export function CameraBarcodeScannerModal({
     return () => {
       isMounted = false
       clearTimeout(timer)
-      stopScannerSafely()
+      generationRef.current += 1
+      void teardownScanner()
     }
-  }, [isOpen, startCamera, stopScannerSafely])
+  }, [isOpen, startCamera, teardownScanner])
 
   // Switch camera toggle
   const handleSwitchCamera = () => {
-    if (cameras.length <= 1) return
+    if (cameras.length <= 1 || isInitializing) return
     const currentIndex = cameras.findIndex((c) => c.id === selectedCameraId)
     const nextIndex = (currentIndex + 1) % cameras.length
     const nextCamera = cameras[nextIndex]
     setSelectedCameraId(nextCamera.id)
-    startCamera(nextCamera.id)
+    void startCamera(nextCamera.id)
   }
 
   if (!isOpen) return null
@@ -262,9 +318,7 @@ export function CameraBarcodeScannerModal({
             {/* Close button */}
             <button
               type="button"
-              onClick={() => {
-                stopScannerSafely().then(onClose)
-              }}
+              onClick={handleClose}
               className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-xl transition-colors"
               title="إغلاق"
             >
@@ -314,8 +368,9 @@ export function CameraBarcodeScannerModal({
               <p className="text-xs text-muted-foreground leading-relaxed max-w-xs">{errorMessage}</p>
               <button
                 type="button"
-                onClick={() => startCamera(selectedCameraId || undefined)}
-                className="px-4 py-2 bg-primary text-primary-foreground text-xs font-bold rounded-xl hover:bg-primary/90 transition-colors"
+                disabled={isInitializing}
+                onClick={() => void startCamera(selectedCameraId || undefined)}
+                className="px-4 py-2 bg-primary text-primary-foreground text-xs font-bold rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
                 إعادة المحاولة
               </button>
@@ -338,7 +393,7 @@ export function CameraBarcodeScannerModal({
 
           <button
             type="button"
-            onClick={() => stopScannerSafely().then(onClose)}
+            onClick={handleClose}
             className="px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground text-xs font-medium"
           >
             إغلاق
