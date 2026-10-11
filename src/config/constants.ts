@@ -13,7 +13,6 @@ export const LOCALE_EN = 'en' as const
 
 // Route paths
 export const ROUTES = {
-  LOGIN:     '/login',
   DASHBOARD: '/',
-  // Future phases will add routes here
+  SYNC:      '/sync',
 } as const

@@ -14,6 +14,7 @@ import { useTenant } from '@/hooks/useTenant'
 import { APP_NAME } from '@/config/constants'
 import { ReceiptModal } from '@/components/shared/ReceiptModal'
 import { CameraBarcodeScannerModal } from '@/components/shared/CameraBarcodeScannerModal'
+import { printProductCatalog } from '@/lib/productCatalogPrint'
 import {
   ScanLine,
   Camera,
@@ -35,6 +36,8 @@ import {
   Maximize2,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+
+const SALE_PRODUCTS_PAGE_SIZE = 60
 
 interface CartItem {
   product_id:      string
@@ -68,8 +71,10 @@ export default function DashboardPage() {
 
   // State
   const [cart, setCart]                   = useState<CartItem[]>([])
+  const cartRef = useRef<CartItem[]>([])
   const [barcodeInput, setBarcodeInput]   = useState('')
   const [searchTerm, setSearchTerm]       = useState('')
+  const [saleProductsPage, setSaleProductsPage] = useState(0)
   const [selectedCategory, setSelectedCat] = useState<string>('all')
   const [barcodeError, setBarcodeError]   = useState<string | null>(null)
   const [barcodeProcessingCount, setBarcodeProcessingCount] = useState(0)
@@ -85,6 +90,11 @@ export default function DashboardPage() {
   const searchRef  = useRef<HTMLInputElement>(null)
   const scanQueueRef = useRef<Promise<void>>(Promise.resolve())
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const updateCart = (next: CartItem[] | ((current: CartItem[]) => CartItem[])) => {
+    const resolved = typeof next === 'function' ? next(cartRef.current) : next
+    cartRef.current = resolved
+    setCart(resolved)
+  }
 
   // Auto-focus barcode field on load
   useEffect(() => {
@@ -107,7 +117,7 @@ export default function DashboardPage() {
     onSuccess: (sale) => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
       setCompletedSale(sale)
-      setCart([])
+      updateCart([])
       setDiscount('')
     },
     onError: (err) => {
@@ -117,28 +127,35 @@ export default function DashboardPage() {
 
   // Add product to cart helper
   const addToCart = useCallback((product: ProductWithStock) => {
-    setCart((prev) => {
-      const existing = prev.find((i) => i.product_id === product.id)
-      if (existing) {
-        return prev.map((i) =>
-          i.product_id === product.id
-            ? { ...i, quantity: i.quantity + 1 }
-            : i
+    const currentCart = cartRef.current
+    const existing = currentCart.find((item) => item.product_id === product.id)
+    const nextQuantity = (existing?.quantity ?? 0) + 1
+    if (nextQuantity > product.current_stock) {
+      setBarcodeError(`المخزون غير كافٍ؛ المتاح من ${product.name_ar}: ${product.current_stock}.`)
+      return
+    }
+
+    setBarcodeError(null)
+    if (existing) {
+      updateCart((current) =>
+        current.map((item) =>
+          item.product_id === product.id ? { ...item, quantity: nextQuantity } : item
         )
-      }
-      return [
-        ...prev,
-        {
-          product_id:      product.id,
-          product_name:    product.name_ar,
-          unit_price:      product.selling_price,
-          quantity:        1,
-          image_url:       product.image_url,
-          current_stock:   product.current_stock,
-          wholesale_price: product.wholesale_price || product.cost_price,
-        },
-      ]
-    })
+      )
+      return
+    }
+    updateCart((current) => [
+      ...current,
+      {
+        product_id: product.id,
+        product_name: product.name_ar,
+        unit_price: product.selling_price,
+        quantity: 1,
+        image_url: product.image_url,
+        current_stock: product.current_stock,
+        wholesale_price: product.wholesale_price || product.cost_price,
+      },
+    ])
   }, [])
 
   // Resolve scans one at a time so rapid consecutive scans are not lost.
@@ -184,7 +201,13 @@ export default function DashboardPage() {
   }
 
   const updateQty = (product_id: string, delta: number) => {
-    setCart((prev) =>
+    const currentItem = cartRef.current.find((item) => item.product_id === product_id)
+    if (!currentItem) return
+    if (delta > 0 && currentItem.quantity + delta > currentItem.current_stock) {
+      alert(`لا يمكن تجاوز المخزون المتاح (${currentItem.current_stock}).`)
+      return
+    }
+    updateCart((prev) =>
       prev
         .map((i) =>
           i.product_id === product_id ? { ...i, quantity: i.quantity + delta } : i
@@ -194,7 +217,7 @@ export default function DashboardPage() {
   }
 
   const removeFromCart = (product_id: string) => {
-    setCart((prev) => prev.filter((i) => i.product_id !== product_id))
+    updateCart((prev) => prev.filter((i) => i.product_id !== product_id))
   }
 
   const cartTotal     = cart.reduce((s, i) => s + i.unit_price * i.quantity, 0)
@@ -215,6 +238,12 @@ export default function DashboardPage() {
       return matchSearch && matchCat
     })
   }, [products, searchTerm, selectedCategory])
+  const saleProductsPageCount = Math.max(1, Math.ceil(filteredProducts.length / SALE_PRODUCTS_PAGE_SIZE))
+  const currentSaleProductsPage = Math.min(saleProductsPage, saleProductsPageCount - 1)
+  const visibleProducts = filteredProducts.slice(
+    currentSaleProductsPage * SALE_PRODUCTS_PAGE_SIZE,
+    (currentSaleProductsPage + 1) * SALE_PRODUCTS_PAGE_SIZE
+  )
 
   // Autocomplete suggestions (top 5 when typing in search)
   const searchSuggestions = useMemo(() => {
@@ -253,7 +282,21 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={isLoading || visibleProducts.length === 0}
+            onClick={() => printProductCatalog(
+              visibleProducts,
+              tenant?.name ?? APP_NAME,
+              () => alert('تعذر تشغيل طباعة قائمة المنتجات. تحقق من أن المتصفح يسمح بالطباعة.')
+            )}
+            title="يطبع المنتجات الظاهرة في الصفحة الحالية مع صورها وأسعار البيع والجملة؛ اختر حفظ كـ PDF من نافذة الطباعة."
+            className="inline-flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3.5 py-2 text-xs font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Printer className="h-4 w-4" />
+            <span>طباعة المنتجات المعروضة (PDF)</span>
+          </button>
           <Link
             to="/products"
             className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2 text-xs font-bold text-foreground hover:bg-muted transition-colors shadow-sm"
@@ -398,13 +441,17 @@ export default function DashboardPage() {
                   placeholder="ابحث بالاسم، الباركود، أو كود SKU..."
                   value={searchTerm}
                   onFocus={() => setIsSearchFocused(true)}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={(e) => {
+                    setSaleProductsPage(0)
+                    setSearchTerm(e.target.value)
+                  }}
                   className="w-full rounded-lg border border-input bg-background pr-10 pl-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
                 {searchTerm && (
                   <button
                     type="button"
                     onClick={() => {
+                      setSaleProductsPage(0)
                       setSearchTerm('')
                       setIsSearchFocused(false)
                     }}
@@ -485,7 +532,10 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
             <button
               type="button"
-              onClick={() => setSelectedCat('all')}
+              onClick={() => {
+                setSaleProductsPage(0)
+                setSelectedCat('all')
+              }}
               className={`px-3.5 py-1.5 rounded-full font-bold transition-colors shrink-0 ${
                 selectedCategory === 'all'
                   ? 'bg-primary text-primary-foreground shadow-xs'
@@ -500,7 +550,10 @@ export default function DashboardPage() {
                 <button
                   key={c.id}
                   type="button"
-                  onClick={() => setSelectedCat(c.id)}
+                  onClick={() => {
+                    setSaleProductsPage(0)
+                    setSelectedCat(c.id)
+                  }}
                   className={`px-3.5 py-1.5 rounded-full font-semibold transition-colors shrink-0 ${
                     selectedCategory === c.id
                       ? 'bg-primary text-primary-foreground shadow-xs'
@@ -527,19 +580,24 @@ export default function DashboardPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
-              {filteredProducts.map((product) => {
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
+              {visibleProducts.map((product) => {
                 const inCart = cart.find((i) => i.product_id === product.id)
                 const isOutOfStock = product.current_stock <= 0
+                // Low stock: still sellable but at/below the reorder level.
+                const isLowStock = !isOutOfStock && product.current_stock <= product.min_stock
 
                 return (
                   <div
                     key={product.id}
-                    onClick={() => addToCart(product)}
-                    className={`group relative bg-card border rounded-2xl p-3 flex flex-col justify-between cursor-pointer transition-all duration-150 shadow-xs hover:shadow-md ${
-                      inCart
-                        ? 'border-primary ring-2 ring-primary/20 bg-primary/5'
-                        : 'border-border hover:border-primary/50'
+                    onClick={() => { if (!isOutOfStock) addToCart(product) }}
+                    className={`group relative bg-card border rounded-2xl p-3 flex flex-col justify-between transition-all duration-150 shadow-xs ${
+                      isOutOfStock
+                        ? 'border-border opacity-75 cursor-not-allowed'
+                        : inCart
+                          ? 'border-primary ring-2 ring-primary/20 bg-primary/5 cursor-pointer hover:shadow-md'
+                          : 'border-border hover:border-primary/50 cursor-pointer hover:shadow-md'
                     }`}
                   >
                     {/* Cart Quantity Badge if in cart */}
@@ -587,9 +645,20 @@ export default function DashboardPage() {
 
                       {/* Title & SKU */}
                       <div>
-                        <h3 className="font-bold text-sm text-foreground leading-snug line-clamp-2">
-                          {product.name_ar}
-                        </h3>
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="font-bold text-sm text-foreground leading-snug line-clamp-2">
+                            {product.name_ar}
+                          </h3>
+                          {isOutOfStock ? (
+                            <span className="shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full bg-red-500/15 text-red-700 dark:text-red-400 border border-red-500/30">
+                              نفد المخزون
+                            </span>
+                          ) : isLowStock ? (
+                            <span className="shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                              مخزون منخفض
+                            </span>
+                          ) : null}
+                        </div>
                         {product.barcode && (
                           <p className="text-[11px] font-mono text-muted-foreground mt-0.5 truncate" dir="ltr">
                             {product.barcode}
@@ -627,11 +696,15 @@ export default function DashboardPage() {
                           <span
                             className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${
                               isOutOfStock
-                                ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                                : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                                ? 'bg-red-500/10 text-red-700 dark:text-red-400'
+                                : isLowStock
+                                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                                  : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
                             }`}
                           >
-                            {toArabicNumerals(product.current_stock)} {product.unit_symbol || 'حبة'}
+                            {isOutOfStock
+                              ? 'غير متوفر'
+                              : `${toArabicNumerals(product.current_stock)} ${product.unit_symbol || 'حبة'}`}
                           </span>
                         </div>
                       </div>
@@ -640,19 +713,53 @@ export default function DashboardPage() {
                     {/* Big Action Button: إضافة إلى السلة */}
                     <button
                       type="button"
+                      disabled={isOutOfStock}
                       onClick={(e) => {
                         e.stopPropagation()
                         addToCart(product)
                       }}
-                      className="w-full mt-2.5 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-colors"
+                      className={`w-full mt-2.5 py-2 px-3 font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-colors ${
+                        isOutOfStock
+                          ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                          : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                      }`}
                     >
                       <Plus className="h-4 w-4" />
-                      <span>إضافة إلى السلة</span>
+                      <span>{isOutOfStock ? 'نفد المخزون' : 'إضافة إلى السلة'}</span>
                     </button>
                   </div>
                 )
               })}
-            </div>
+              </div>
+              {saleProductsPageCount > 1 && (
+                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                  <span>
+                    عرض {toArabicNumerals(currentSaleProductsPage * SALE_PRODUCTS_PAGE_SIZE + 1)}–
+                    {toArabicNumerals(Math.min((currentSaleProductsPage + 1) * SALE_PRODUCTS_PAGE_SIZE, filteredProducts.length))}
+                    {' '}من {toArabicNumerals(filteredProducts.length)} منتج
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={currentSaleProductsPage === 0}
+                      onClick={() => setSaleProductsPage(currentSaleProductsPage - 1)}
+                      className="rounded-md border border-border px-3 py-1.5 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      السابق
+                    </button>
+                    <span>{toArabicNumerals(currentSaleProductsPage + 1)} / {toArabicNumerals(saleProductsPageCount)}</span>
+                    <button
+                      type="button"
+                      disabled={currentSaleProductsPage >= saleProductsPageCount - 1}
+                      onClick={() => setSaleProductsPage(currentSaleProductsPage + 1)}
+                      className="rounded-md border border-border px-3 py-1.5 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      التالي
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -673,7 +780,7 @@ export default function DashboardPage() {
                 {cart.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => setCart([])}
+                    onClick={() => updateCart([])}
                     className="text-xs text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1 mr-1"
                     title="تفريغ السلة"
                   >
@@ -761,7 +868,7 @@ export default function DashboardPage() {
             {/* Cart Footer: Summary and Complete Sale Button */}
             <div className="border-t border-border p-5 space-y-4 bg-muted/20">
 
-              {/* Discount Field */}
+              {/* Cashier discount; public ordering is not enabled on this local-only build. */}
               <div className="flex items-center justify-between gap-3 text-xs">
                 <label className="font-semibold text-muted-foreground shrink-0">
                   خصم إضافي (₪):

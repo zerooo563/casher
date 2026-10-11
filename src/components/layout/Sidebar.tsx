@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Package,
   History,
+  RefreshCw,
 } from 'lucide-react'
 import { useTenant } from '@/hooks/useTenant'
 import { APP_NAME } from '@/config/constants'
@@ -19,10 +20,12 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'شاشة البيع (POS)',      path: '/',          icon: ShoppingCart },
   { label: 'المنتجات والمخزون',     path: '/products',  icon: Package },
   { label: 'سجل حركات المخزون',     path: '/movements', icon: History },
+  { label: 'المزامنة السحابية',      path: '/sync',      icon: RefreshCw },
 ]
 
 export function Sidebar() {
   const { tenant } = useTenant()
+  const navItems = NAV_ITEMS
 
   return (
     <aside className="flex flex-col w-60 min-h-screen bg-card border-e border-border shrink-0">
@@ -39,7 +42,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
-        {NAV_ITEMS.map((item) => (
+        {navItems.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}

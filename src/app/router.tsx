@@ -11,6 +11,7 @@ import { ROUTES }          from '@/config/constants'
 const DashboardPage  = lazy(() => import('@/features/dashboard/DashboardPage'))
 const ProductsPage   = lazy(() => import('@/features/inventory/ProductsPage'))
 const MovementsPage  = lazy(() => import('@/features/inventory/MovementsPage'))
+const SyncPage       = lazy(() => import('@/features/sync/SyncPage'))
 
 // Loading fallback (used during lazy chunk load)
 function PageLoader() {
@@ -21,8 +22,9 @@ function PageLoader() {
   )
 }
 
+// No accounts: every route opens directly, data stays on this device.
+// The cloud is used only for the temporary shared product catalog (/sync).
 const router = createBrowserRouter([
-  // Local inventory routes — no account is required.
   {
     path: '/',
     element: (
@@ -49,6 +51,16 @@ const router = createBrowserRouter([
       <AppShell>
         <Suspense fallback={<PageLoader />}>
           <MovementsPage />
+        </Suspense>
+      </AppShell>
+    ),
+  },
+  {
+    path: ROUTES.SYNC,
+    element: (
+      <AppShell>
+        <Suspense fallback={<PageLoader />}>
+          <SyncPage />
         </Suspense>
       </AppShell>
     ),

@@ -4,6 +4,7 @@ import {
   fetchProducts,
   fetchCategories,
   createCategory,
+  createUnit,
   fetchUnits,
   fetchWarehouses,
   createProduct,
@@ -31,9 +32,12 @@ import {
   Camera,
   Check,
   Trash2,
+  RefreshCw,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { CameraBarcodeScannerModal } from '@/components/shared/CameraBarcodeScannerModal'
+
+const PRODUCTS_PAGE_SIZE = 100
 
 export default function ProductsPage() {
   const queryClient = useQueryClient()
@@ -61,6 +65,7 @@ export default function ProductsPage() {
 
   // State
   const [searchTerm, setSearchTerm]         = useState('')
+  const [productPage, setProductPage]       = useState(0)
   const [selectedCategory, setSelectedCat]   = useState<string>('all')
   const [onlyLowStock, setOnlyLowStock]     = useState(false)
   const [showAddModal, setShowAddModal]     = useState(false)
@@ -70,6 +75,8 @@ export default function ProductsPage() {
   const [tempImageUrl, setTempImageUrl]     = useState<string | null>(null)
   const [imageError, setImageError]         = useState<string | null>(null)
   const [isCompressing, setIsCompressing]   = useState(false)
+  const [isAddDragging, setIsAddDragging]   = useState(false)
+  const [isEditDragging, setIsEditDragging] = useState(false)
 
   // Form State for Add Product
   const [newProdNameAr, setNewProdNameAr]       = useState('')
@@ -80,6 +87,10 @@ export default function ProductsPage() {
   const [showNewCategoryForm, setShowNewCategoryForm] = useState(false)
   const [categoryFormError, setCategoryFormError] = useState<string | null>(null)
   const [newProdUnit, setNewProdUnit]           = useState('')
+  const [showNewUnitForm, setShowNewUnitForm]   = useState(false)
+  const [newUnitName, setNewUnitName]           = useState('')
+  const [newUnitSymbol, setNewUnitSymbol]       = useState('')
+  const [unitFormError, setUnitFormError]       = useState<string | null>(null)
   const [newProdCost, setNewProdCost]           = useState('')
   const [newProdPrice, setNewProdPrice]         = useState('')
   const [newProdWholesale, setNewProdWholesale] = useState('')
@@ -118,6 +129,23 @@ export default function ProductsPage() {
       setCategoryFormError(error instanceof Error ? error.message : String(error)),
   })
 
+  const addUnitMutation = useMutation({
+    mutationFn: createUnit,
+    onSuccess: (unit) => {
+      queryClient.setQueryData(['units'], (current: typeof units = []) =>
+        [...current, unit].sort((a, b) => a.name_ar.localeCompare(b.name_ar, 'ar'))
+      )
+      void queryClient.invalidateQueries({ queryKey: ['units'] })
+      setNewProdUnit(unit.id)
+      setNewUnitName('')
+      setNewUnitSymbol('')
+      setUnitFormError(null)
+      setShowNewUnitForm(false)
+    },
+    onError: (error) =>
+      setUnitFormError(error instanceof Error ? error.message : String(error)),
+  })
+
   const addProductMutation = useMutation({
     mutationFn: createProduct,
     onSuccess: () => {
@@ -148,6 +176,9 @@ export default function ProductsPage() {
       setAdjustProduct(null)
       setAdjQty('1')
       setAdjNotes('')
+    },
+    onError: (error) => {
+      alert(error instanceof Error ? error.message : String(error))
     },
   })
 
@@ -184,10 +215,22 @@ export default function ProductsPage() {
     }
   }, [showAddModal])
 
+  function assertImageFile(file: File | undefined): asserts file is File {
+    if (!file) throw new Error('empty')
+    if (!file.type.startsWith('image/')) {
+      throw new Error('not-image')
+    }
+  }
+
   // Handle image upload with auto-compression for Add Modal
-  const handleAddImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const processAddImageFile = async (file: File | undefined) => {
+    try {
+      assertImageFile(file)
+    } catch (err) {
+      if (err instanceof Error && err.message === 'empty') return
+      alert('يرجى إفلات ملف صورة صالح (JPG أو PNG أو WEBP)')
+      return
+    }
     try {
       setIsCompressing(true)
       const compressed = await compressImage(file, 500, 500, 0.8)
@@ -199,10 +242,27 @@ export default function ProductsPage() {
     }
   }
 
-  // Handle image upload with auto-compression for Edit Image Modal
-  const handleEditImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAddImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file) return
+    e.target.value = ''
+    await processAddImageFile(file)
+  }
+
+  const handleAddImageDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setIsAddDragging(false)
+    await processAddImageFile(e.dataTransfer.files?.[0])
+  }
+
+  // Handle image upload with auto-compression for Edit Image Modal
+  const processEditImageFile = async (file: File | undefined) => {
+    try {
+      assertImageFile(file)
+    } catch (err) {
+      if (err instanceof Error && err.message === 'empty') return
+      setImageError('يرجى إفلات ملف صورة صالح (JPG أو PNG أو WEBP)')
+      return
+    }
     try {
       setIsCompressing(true)
       setImageError(null)
@@ -213,6 +273,18 @@ export default function ProductsPage() {
     } finally {
       setIsCompressing(false)
     }
+  }
+
+  const handleEditImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    await processEditImageFile(file)
+  }
+
+  const handleEditImageDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setIsEditDragging(false)
+    await processEditImageFile(e.dataTransfer.files?.[0])
   }
 
   // Filtered products
@@ -231,6 +303,12 @@ export default function ProductsPage() {
       return matchSearch && matchCat && matchLow
     })
   }, [products, searchTerm, selectedCategory, onlyLowStock])
+  const pageCount = Math.max(1, Math.ceil(filteredProducts.length / PRODUCTS_PAGE_SIZE))
+  const currentProductPage = Math.min(productPage, pageCount - 1)
+  const visibleProducts = filteredProducts.slice(
+    currentProductPage * PRODUCTS_PAGE_SIZE,
+    (currentProductPage + 1) * PRODUCTS_PAGE_SIZE
+  )
 
   // Summary Metrics
   const activeProducts = products.filter((product) => product.is_active)
@@ -254,7 +332,15 @@ export default function ProductsPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/sync"
+            title="دفع المنتجات إلى الكتالوج السحابي المشترك أو سحب منتجات المساعدين."
+            className="inline-flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-bold text-primary hover:bg-primary/10"
+          >
+            <RefreshCw className="h-4 w-4" />
+            <span>المزامنة السحابية</span>
+          </Link>
           <Link
             to="/movements"
             className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors shadow-sm"
@@ -335,7 +421,10 @@ export default function ProductsPage() {
             type="text"
             placeholder="بحث باسم المنتج، رمز SKU، أو الباركود..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              setProductPage(0)
+              setSearchTerm(e.target.value)
+            }}
             className="w-full rounded-lg border border-input bg-background pr-9 pl-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
@@ -346,7 +435,10 @@ export default function ProductsPage() {
             <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
             <select
               value={selectedCategory}
-              onChange={(e) => setSelectedCat(e.target.value)}
+              onChange={(e) => {
+                setProductPage(0)
+                setSelectedCat(e.target.value)
+              }}
               className="bg-transparent focus:outline-none text-xs text-foreground"
             >
               <option value="all">كل التصنيفات ({toArabicNumerals(activeProducts.length)})</option>
@@ -360,7 +452,10 @@ export default function ProductsPage() {
 
           {/* Low Stock Toggle */}
           <button
-            onClick={() => setOnlyLowStock(!onlyLowStock)}
+            onClick={() => {
+              setProductPage(0)
+              setOnlyLowStock(!onlyLowStock)
+            }}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 ${
               onlyLowStock
                 ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30'
@@ -401,7 +496,7 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {filteredProducts.map((p) => {
+                {visibleProducts.map((p) => {
                   const isLow = p.current_stock <= p.min_stock
                   const isOut = p.current_stock <= 0
 
@@ -556,6 +651,34 @@ export default function ProductsPage() {
             </table>
           </div>
         )}
+        {!isLoading && filteredProducts.length > 0 && pageCount > 1 && (
+          <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 text-xs text-muted-foreground">
+            <span>
+              عرض {toArabicNumerals(currentProductPage * PRODUCTS_PAGE_SIZE + 1)}–
+              {toArabicNumerals(Math.min((currentProductPage + 1) * PRODUCTS_PAGE_SIZE, filteredProducts.length))}
+              {' '}من {toArabicNumerals(filteredProducts.length)} منتج
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={currentProductPage === 0}
+                onClick={() => setProductPage(currentProductPage - 1)}
+                className="rounded-md border border-border px-3 py-1.5 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                السابق
+              </button>
+              <span>{toArabicNumerals(currentProductPage + 1)} / {toArabicNumerals(pageCount)}</span>
+              <button
+                type="button"
+                disabled={currentProductPage >= pageCount - 1}
+                onClick={() => setProductPage(currentProductPage + 1)}
+                className="rounded-md border border-border px-3 py-1.5 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                التالي
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* MODAL: DELETE PRODUCT */}
@@ -639,11 +762,21 @@ export default function ProductsPage() {
                 ) : (
                   <div
                     onClick={() => modalImageInputRef.current?.click()}
-                    className="h-40 w-40 rounded-xl border-2 border-dashed border-border hover:border-primary bg-muted/40 flex flex-col items-center justify-center cursor-pointer transition-colors p-4"
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setIsEditDragging(true)
+                    }}
+                    onDragLeave={() => setIsEditDragging(false)}
+                    onDrop={handleEditImageDrop}
+                    className={`h-40 w-40 rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-colors p-4 ${
+                      isEditDragging
+                        ? 'border-primary bg-primary/10 scale-105'
+                        : 'border-border hover:border-primary bg-muted/40'
+                    }`}
                   >
                     <ImagePlus className="h-10 w-10 text-muted-foreground opacity-50 mb-2" />
-                    <span className="text-xs text-muted-foreground font-medium">
-                      انقر لاختيار صورة
+                    <span className="text-xs text-muted-foreground font-medium text-center">
+                      انقر لاختيار صورة أو اسحبها وأفلتها هنا
                     </span>
                   </div>
                 )}
@@ -722,6 +855,13 @@ export default function ProductsPage() {
             <form
               onSubmit={(e) => {
                 e.preventDefault()
+                const sellingPrice = parseFloat(newProdPrice) || 0
+                const wholesalePrice = parseFloat(newProdWholesale) || parseFloat(newProdCost) || 0
+                if (wholesalePrice > sellingPrice) {
+                  setProductFormError('لا يمكن أن يكون سعر الجملة أكبر من سعر القطعة (يمكن أن يساويه).')
+                  return
+                }
+                setProductFormError(null)
                 addProductMutation.mutate({
                   name_ar:         newProdNameAr,
                   sku:             newProdSku,
@@ -729,8 +869,8 @@ export default function ProductsPage() {
                   category_id:     newProdCat,
                   unit_id:         newProdUnit,
                   cost_price:      parseFloat(newProdCost) || 0,
-                  selling_price:   parseFloat(newProdPrice) || 0,
-                  wholesale_price: parseFloat(newProdWholesale) || parseFloat(newProdCost) || 0,
+                  selling_price:   sellingPrice,
+                  wholesale_price: wholesalePrice,
                   min_stock:       parseFloat(newProdMinStock) || 0,
                   initial_stock:   parseFloat(newProdInitStock) || 0,
                   warehouse_id:    newProdWh,
@@ -760,8 +900,19 @@ export default function ProductsPage() {
                     </div>
                   ) : (
                     <div
-                      className="h-16 w-16 rounded-lg border-2 border-dashed border-border bg-muted flex items-center justify-center cursor-pointer hover:border-primary transition-colors"
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        setIsAddDragging(true)
+                      }}
+                      onDragLeave={() => setIsAddDragging(false)}
+                      onDrop={handleAddImageDrop}
+                      className={`h-16 w-16 rounded-lg border-2 border-dashed bg-muted flex items-center justify-center cursor-pointer transition-colors ${
+                        isAddDragging
+                          ? 'border-primary bg-primary/10 scale-105'
+                          : 'border-border hover:border-primary'
+                      }`}
                       onClick={() => addImageInputRef.current?.click()}
+                      title="انقر لاختيار صورة أو اسحبها وأفلتها هنا"
                     >
                       <ImagePlus className="h-6 w-6 text-muted-foreground" />
                     </div>
@@ -774,7 +925,7 @@ export default function ProductsPage() {
                     >
                       {newProdImage ? 'تغيير الصورة' : 'اختيار صورة'}
                     </button>
-                    <p className="text-[11px] text-muted-foreground mt-1">يتم ضغط الصورة وتحسينها تلقائياً</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">يتم ضغط الصورة وتحسينها تلقائياً — يمكنك الاختيار أو السحب والإفلات</p>
                   </div>
                   <input
                     ref={addImageInputRef}
@@ -970,6 +1121,51 @@ export default function ProductsPage() {
                       </option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUnitFormError(null)
+                      setShowNewUnitForm((show) => !show)
+                    }}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>إضافة وحدة قياس</span>
+                  </button>
+                  {showNewUnitForm && (
+                    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                      <input
+                        type="text"
+                        value={newUnitName}
+                        onChange={(event) => setNewUnitName(event.target.value)}
+                        maxLength={60}
+                        placeholder="اسم الوحدة (مثال: عبوة)"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                      <input
+                        type="text"
+                        value={newUnitSymbol}
+                        onChange={(event) => setNewUnitSymbol(event.target.value)}
+                        maxLength={20}
+                        placeholder="رمز الوحدة (مثال: عبوة)"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                      {unitFormError && (
+                        <p className="text-xs text-destructive" role="alert">{unitFormError}</p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => addUnitMutation.mutate({
+                          name_ar: newUnitName,
+                          symbol: newUnitSymbol,
+                        })}
+                        disabled={addUnitMutation.isPending || !newUnitName.trim() || !newUnitSymbol.trim()}
+                        className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+                      >
+                        {addUnitMutation.isPending ? 'جارٍ الحفظ...' : 'حفظ وحدة القياس'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -979,6 +1175,7 @@ export default function ProductsPage() {
                   <label className="text-xs font-semibold text-foreground">سعر الجملة (₪) *</label>
                   <input
                     type="number"
+                    min="0"
                     step="0.01"
                     required
                     dir="ltr"
@@ -990,6 +1187,11 @@ export default function ProductsPage() {
                     }}
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
                   />
+                  {(parseFloat(newProdWholesale) || 0) > (parseFloat(newProdPrice) || 0) && newProdWholesale.trim() !== '' && (
+                    <p className="text-[11px] text-destructive font-semibold">
+                      سعر الجملة لا يمكن أن يتجاوز سعر القطعة — ساوِه أو اخفضه
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-1">
@@ -1012,6 +1214,7 @@ export default function ProductsPage() {
                   <label className="text-xs font-semibold text-foreground">الكمية الافتتاحية</label>
                   <input
                     type="number"
+                    min="0"
                     step="1"
                     dir="ltr"
                     value={newProdInitStock}
