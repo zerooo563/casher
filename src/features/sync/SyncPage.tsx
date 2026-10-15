@@ -212,15 +212,28 @@ export default function SyncPage() {
           )}
 
           {pushResult && (
-            <div role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-800 dark:text-emerald-300 space-y-1">
+            <div
+              role="status"
+              className={`rounded-lg border p-3 text-xs space-y-1 ${
+                pushResult.processed === 0
+                  ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+              }`}
+            >
               <p className="font-bold flex items-center gap-1.5">
                 <CheckCircle2 className="h-4 w-4" />
-                <span>تم قبول {toArabicNumerals(pushResult.processed)} منتج في السحابة</span>
+                <span>
+                  {pushResult.processed === 0
+                    ? `لم يُقبل أي منتج في السحابة — راجع المتخطاة أدناه`
+                    : `تم قبول ${toArabicNumerals(pushResult.processed)} منتج في السحابة`}
+                </span>
               </p>
               {pushResult.skipped.length > 0 && (
                 <p>
                   تُخطّي {toArabicNumerals(pushResult.skipped.length)} منتج لتعارض SKU أو باركود مع صف آخر
-                  (وحّدوا الـ SKU والباركود بين الأجهزة ثم أعيدوا الدفع).
+                  (وحّدوا الـ SKU والباركود بين الأجهزة ثم أعيدوا الدفع):
+                  {' '}{(pushResult.skippedNames.length > 0 ? pushResult.skippedNames : pushResult.skipped).slice(0, 5).join('، ')}
+                  {pushResult.skipped.length > 5 ? '…' : ''}
                 </p>
               )}
             </div>

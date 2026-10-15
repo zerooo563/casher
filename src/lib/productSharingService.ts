@@ -6,6 +6,7 @@ import {
   type UnitItem,
 } from '@/lib/inventoryService'
 import { env, isSupabaseConfigured } from '@/config/env'
+import { toArabicNumerals } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 import type { Json } from '@/types/database'
 
@@ -41,6 +42,7 @@ export interface PushProgress {
 export interface PushResult {
   processed: number
   skipped:   string[] // source_product_ids skipped (invalid or SKU/barcode clash)
+  skippedNames: string[] // local product names matching the skipped ids
 }
 
 export interface PullResult {
@@ -125,7 +127,7 @@ async function makeSharedImageUrl(
   return supabase.storage.from('shared-product-images').getPublicUrl(path).data.publicUrl
 }
 
-function parsePublishResponse(value: Json, batchIndex: number): PushResult {
+function parsePublishResponse(value: Json, batchIndex: number): Omit<PushResult, 'skippedNames'> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error(`استجابة الدفع للدفعة ${batchIndex + 1} غير صالحة.`)
   }
@@ -214,7 +216,7 @@ export async function publishSharedCatalog(
   const categories = new Map(input.categories.map((category) => [category.id, category.name_ar]))
   const units = new Map(input.units.map((unit) => [unit.id, unit]))
 
-  const aggregate: PushResult = { processed: 0, skipped: [] }
+  const aggregate: PushResult = { processed: 0, skipped: [], skippedNames: [] }
 
   for (let index = 0; index < products.length; index += PUSH_BATCH_SIZE) {
     const batch = products.slice(index, index + PUSH_BATCH_SIZE)
@@ -259,7 +261,7 @@ export async function publishSharedCatalog(
     )
 
     // The server reports bad rows as skipped; transport errors are retried.
-    let batchResult: PushResult | null = null
+    let batchResult: Omit<PushResult, 'skippedNames'> | null = null
     let lastError: unknown = null
     for (let attempt = 1; attempt <= RPC_MAX_ATTEMPTS; attempt++) {
       report('upload', attempt, RPC_MAX_ATTEMPTS)
@@ -280,6 +282,10 @@ export async function publishSharedCatalog(
 
     aggregate.processed += batchResult.processed
     aggregate.skipped.push(...batchResult.skipped)
+    const namesById = new Map(products.map((p) => [p.id, p.name_ar] as const))
+    aggregate.skippedNames = aggregate.skipped.map(
+      (id, i) => namesById.get(id) ?? `منتج ${toArabicNumerals(i + 1)}`
+    )
     onProgress?.({
       batch: batchIndex + 1,
       batches,
